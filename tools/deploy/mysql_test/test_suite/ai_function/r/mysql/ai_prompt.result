@@ -248,3 +248,19 @@ result
 {"args": [], "template": "bbb"}
 {"args": [], "template": "bb"}
 drop table t1;
+select json_type(json_extract(ai_prompt('{0}', json_object('k', 'v')), '$.args[0]'));
+json_type(json_extract(ai_prompt('{0}', json_object('k', 'v')), '$.args[0]'))
+OBJECT
+select json_length(json_extract(ai_prompt('{0}', json_array(1, 2)), '$.args[0]'));
+json_length(json_extract(ai_prompt('{0}', json_array(1, 2)), '$.args[0]'))
+2
+select json_extract(ai_prompt('{0}', ai_prompt('nested:{0}', 'ok')), '$.args[0].template');
+json_extract(ai_prompt('{0}', ai_prompt('nested:{0}', 'ok')), '$.args[0].template')
+"nested:{0}"
+create table prompt_text_lob(t text, a longtext);
+insert into prompt_text_lob values ('text:{0}', repeat('x', 100000));
+select json_unquote(json_extract(ai_prompt(t, a), '$.template')),
+length(json_unquote(json_extract(ai_prompt(t, a), '$.args[0]'))) from prompt_text_lob;
+json_unquote(json_extract(ai_prompt(t, a), '$.template'))	length(json_unquote(json_extract(ai_prompt(t, a), '$.args[0]')))
+text:{0}	100000
+drop table prompt_text_lob;

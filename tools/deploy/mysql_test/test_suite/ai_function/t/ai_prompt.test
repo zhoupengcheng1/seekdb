@@ -231,3 +231,13 @@ WITH t3 AS (
 SELECT * FROM t3;
 
 drop table t1;
+
+# Structured arguments and nested prompts retain their JSON types.
+select json_type(json_extract(ai_prompt('{0}', json_object('k', 'v')), '$.args[0]'));
+select json_length(json_extract(ai_prompt('{0}', json_array(1, 2)), '$.args[0]'));
+select json_extract(ai_prompt('{0}', ai_prompt('nested:{0}', 'ok')), '$.args[0].template');
+create table prompt_text_lob(t text, a longtext);
+insert into prompt_text_lob values ('text:{0}', repeat('x', 100000));
+select json_unquote(json_extract(ai_prompt(t, a), '$.template')),
+       length(json_unquote(json_extract(ai_prompt(t, a), '$.args[0]'))) from prompt_text_lob;
+drop table prompt_text_lob;
