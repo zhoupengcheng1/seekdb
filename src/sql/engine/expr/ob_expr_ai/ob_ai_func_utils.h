@@ -281,6 +281,9 @@ class ObAIFuncUtils
 public:
   ObAIFuncUtils() {}
   virtual ~ObAIFuncUtils() {}
+  static int get_finite_number(const ObIJsonBase *node, double &value);
+  static int validate_embedding_array(const ObIJsonBase *node, int64_t dimension = 0);
+  static int validate_rerank_result(ObIAllocator &allocator, ObJsonArray *&array, int64_t expected_count);
   static bool is_completion_type(const ObAIFuncExprInfo *info) {return info->type_ == share::EndpointType::COMPLETION;}
   static bool is_dense_embedding_type(const ObAIFuncExprInfo *info) {return info->type_ == share::EndpointType::DENSE_EMBEDDING;}
   static bool is_rerank_type(const ObAIFuncExprInfo *info) {return info->type_ == share::EndpointType::RERANK;}
