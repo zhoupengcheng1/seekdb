@@ -629,6 +629,7 @@ public:
     filter_ds_stat_cache_.reuse();
     type_demotion_flag_ = 0;
     has_hybrid_search_ = false;
+    has_file_sql_ = false;
   }
 
   int64_t get_new_stmt_id() { return stmt_count_++; }
@@ -739,6 +740,7 @@ public:
     };
   };
   bool has_hybrid_search_;
+  bool has_file_sql_ = false;
 };
 
 } /* ns sql*/

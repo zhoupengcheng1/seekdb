@@ -14,6 +14,10 @@ if(ARCHITECTURE STREQUAL "x86_64" OR ARCHITECTURE STREQUAL "amd64")
     -mtune=core-avx2 -mavx2 -mfma -mbmi2 -mavx512vl -mavx512bw)
 endif()
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/parser/sql_parser_mysql_mode.y"
+  "${CMAKE_CURRENT_SOURCE_DIR}/parser/sql_parser_mysql_mode.l")
+
 if(WIN32)
   find_program(PWSH_EXE NAMES pwsh pwsh.exe powershell powershell.exe REQUIRED)
   execute_process(

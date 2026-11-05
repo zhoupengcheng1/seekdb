@@ -15,6 +15,7 @@
 //! Process-local persistent storage. KV owns durability and concurrency;
 //! records add typed fields, ordered keys and streaming selection, without SQL.
 mod bridge;
+mod file_sql;
 mod records;
 
 pub use bridge::Store;

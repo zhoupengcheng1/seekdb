@@ -5487,6 +5487,21 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       spec.parallel_ = op.get_parallel();
       spec.is_overwrite_ = op.get_is_overwrite();
       spec.plan_->need_drive_dml_query_ = true;
+      if (op.get_stmt()->is_select_stmt()) {
+        const ObSelectStmt &stmt = static_cast<const ObSelectStmt &>(*op.get_stmt());
+        const ObSelectIntoItem *into = stmt.get_select_into();
+        spec.is_file_copy_ = into != nullptr && into->is_file_copy_;
+        if (spec.is_file_copy_ && into->is_optional_) {
+          OZ(spec.file_copy_headers_.init(stmt.get_select_item_size()));
+          for (int64_t i = 0; OB_SUCC(ret) && i < stmt.get_select_item_size(); ++i) {
+            const SelectItem &item = stmt.get_select_item(i);
+            const ObString &name = item.alias_name_.empty() ? item.expr_name_ : item.alias_name_;
+            ObString stored;
+            OZ(ob_write_string(alloc, name, stored));
+            OZ(spec.file_copy_headers_.push_back(stored));
+          }
+        }
+      }
     }
   }
   return ret;
@@ -5511,6 +5526,11 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
   } else {
     spec.has_correlated_expr_ = value_raw_expr->has_flag(CNT_DYNAMIC_PARAM);
     spec.value_expr_ = value_expr;
+    const ObString file_descriptor = file_sql_descriptor(value_raw_expr);
+    if (!file_descriptor.empty()) {
+      OZ(ob_write_string(alloc, file_descriptor, spec.file_descriptor_));
+      OZ(spec.file_columns_.init(op.get_stmt()->get_column_size()));
+    }
     for (int64_t i = 0; OB_SUCC(ret) && i < op.get_output_exprs().count(); ++i) {
       if (OB_FAIL(mark_expr_self_produced(op.get_output_exprs().at(i)))) {
       }
@@ -5526,6 +5546,9 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         OZ (mark_expr_self_produced(col_item->expr_));
         OZ (generate_rt_expr(*col_item->expr_, rt_expr));
         OZ (spec.column_exprs_.push_back(rt_expr));
+        if (!file_descriptor.empty()) {
+          OZ(spec.file_columns_.push_back(static_cast<uint32_t>(col_item->column_id_ - 1)));
+        }
       }
     }
   }
@@ -6116,7 +6139,9 @@ int ObStaticEngineCG::get_phy_op_type(ObLogicalOperator &log_op,
       break;
     }
     case log_op_def::LOG_FUNCTION_TABLE: {
-      type = PHY_FUNCTION_TABLE;
+      const auto &function = static_cast<const ObLogFunctionTable &>(log_op);
+      type = file_sql_descriptor(function.get_value_expr()).empty()
+          ? PHY_FUNCTION_TABLE : PHY_FILE_TABLE;
       break;
     }
     case log_op_def::LOG_JSON_TABLE: {

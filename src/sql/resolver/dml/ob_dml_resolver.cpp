@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/ob_file_sql.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
@@ -3923,9 +3924,146 @@ int ObDMLResolver::resolve_json_table_item(const ParseNode &parse_tree, TableIte
   return ret;
 }
 
+int ObDMLResolver::resolve_file_table_item(const ParseNode &node, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  ObString root;
+  const ParseNode &func = *node.children_[0];
+  const ParseNode &args = *node.children_[2];
+  const ObString name(func.str_len_, func.str_value_);
+  const ParseNode *path = args.num_child_ > 0 ? args.children_[0] : nullptr;
+  const bool supported = name.case_compare("read_csv") == 0 || name.case_compare("read_json") == 0
+      || name.case_compare("read_ndjson") == 0 || name.case_compare("read_parquet") == 0
+      || name.case_compare("glob") == 0;
+  ObSEArray<FileSqlSpan, 16> options;
+  if (!supported || path == nullptr || path->type_ != T_VARCHAR) {
+    ret = OB_ERR_PARSE_SQL;
+  } else if (OB_FAIL(get_file_sql_root(session_info_, root))) {
+  } else if (args.num_child_ > 17) {
+    ret = file_sql_error("too many file table options");
+  }
+  for (int64_t i = 1; OB_SUCC(ret) && i < args.num_child_; ++i) {
+    const ParseNode *arg = args.children_[i];
+    const ParseNode *key = nullptr;
+    const ParseNode *value = nullptr;
+    if (arg != nullptr && arg->type_ == T_OP_EQ && arg->num_child_ == 2) {
+      const ParseNode *lhs = arg->children_[0];
+      if (lhs != nullptr && lhs->type_ == T_COLUMN_REF && lhs->num_child_ == 3
+          && lhs->children_[0] == nullptr && lhs->children_[1] == nullptr) {
+        key = lhs->children_[2];
+        value = arg->children_[1];
+      }
+    }
+    ObString option;
+    if (value == nullptr || key == nullptr) {
+      ret = OB_ERR_PARSE_SQL;
+    } else if (value->type_ == T_VARCHAR) {
+      option.assign_ptr(value->str_value_, value->str_len_);
+    } else if (value->type_ == T_BOOL) {
+      option = value->value_ ? ObString("true") : ObString("false");
+    } else if (value->type_ == T_INT) {
+      if (value->value_ == -1) {
+        option = ObString("-1");
+      } else if (value->value_ == 0) {
+        option = ObString("0");
+      } else if (value->value_ == 1) {
+        option = ObString("1");
+      } else {
+        ret = file_sql_error("unsupported numeric file option");
+      }
+    } else if (value->type_ == T_OP_NEG && value->num_child_ == 1
+               && value->children_[0] != nullptr && value->children_[0]->type_ == T_INT
+               && value->children_[0]->value_ == 1) {
+      option = ObString("-1");
+    } else {
+      ret = OB_ERR_PARSE_SQL;
+    }
+    OZ(options.push_back({key->str_value_, static_cast<size_t>(key->str_len_)}));
+    OZ(options.push_back(FileSqlSpan::from(option)));
+  }
+  if (ret == OB_ERR_PARSE_SQL) {
+    LOG_USER_ERROR(OB_ERR_PARSE_SQL, "invalid file table syntax", name.length(), name.ptr(), 1);
+  }
+  FileSqlBound *bound = nullptr;
+  char error[512] = {};
+  if (OB_SUCC(ret) && OB_ISNULL(bound = seekdb_file_bind(
+        FileSqlSpan::from(name), {path->str_value_, static_cast<size_t>(path->str_len_)},
+        FileSqlSpan::from(root), options.count() == 0 ? nullptr : &options.at(0),
+        options.count(), error, sizeof(error)))) {
+    ret = file_sql_error(error);
+  }
+  ObDMLStmt *stmt = get_stmt();
+  ObConstRawExpr *descriptor = nullptr;
+  if (OB_SUCC(ret) && OB_ISNULL(item = stmt->create_table_item(*allocator_))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  }
+  OZ(params_.expr_factory_->create_raw_expr(T_VARCHAR, descriptor));
+  if (OB_SUCC(ret)) {
+    const FileSqlSpan encoded = seekdb_file_descriptor(bound);
+    constexpr size_t prefix_len = sizeof(FILE_SQL_DESCRIPTOR_PREFIX) - 1;
+    char *buffer = static_cast<char *>(allocator_->alloc(prefix_len + encoded.len_));
+    if (OB_ISNULL(buffer)) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      MEMCPY(buffer, FILE_SQL_DESCRIPTOR_PREFIX, prefix_len);
+      MEMCPY(buffer + prefix_len, encoded.data_, encoded.len_);
+      ObObj value;
+      value.set_varchar(ObString(static_cast<int32_t>(prefix_len + encoded.len_), buffer));
+      value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+      value.set_collation_level(CS_LEVEL_COERCIBLE);
+      descriptor->set_value(value);
+      OZ(descriptor->extract_info());
+      const ParseNode *alias = node.children_[1];
+      item->table_name_ = name;
+      item->alias_name_ = alias == nullptr ? name : ObString(alias->str_len_, alias->str_value_);
+      item->table_id_ = generate_table_id();
+      item->type_ = TableItem::FUNCTION_TABLE;
+      item->function_table_expr_ = descriptor;
+      stmt->get_query_ctx()->has_file_sql_ = true;
+      stmt->get_query_ctx()->disable_udf_parallel_ = true;
+      OZ(stmt->add_table_item(session_info_, item));
+    }
+  }
+  if (OB_SUCC(ret)) {
+    const size_t count = seekdb_file_column_count(bound);
+    for (size_t i = 0; OB_SUCC(ret) && i < count; ++i) {
+      FileSqlKind kind = FileSqlKind::NULL_VALUE;
+      bool nullable = false;
+      uint8_t scale = 0;
+      const FileSqlSpan column = seekdb_file_column(bound, i, kind, nullable, scale);
+      static constexpr ObObjType types[] = {
+        ObNullType, ObIntType, ObDoubleType, ObTinyIntType, ObVarcharType, ObDateType, ObDateTimeType
+      };
+      ObObjMeta meta;
+      meta.set_type(types[static_cast<size_t>(kind)]);
+      ObAccuracy accuracy = ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()];
+      if (kind == FileSqlKind::DATETIME) {
+        accuracy.set_scale(scale);
+      }
+      if (meta.is_varchar()) {
+        meta.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        meta.set_collation_level(CS_LEVEL_IMPLICIT);
+        accuracy.set_length(1024 * 1024);
+      }
+      ObString column_name;
+      ColumnItem *column_item = nullptr;
+      OZ(ob_write_string(*allocator_, column.str(), column_name));
+      OZ(resolve_function_table_column_item(*item, meta, accuracy, column_name, i + 1, column_item));
+      if (OB_SUCC(ret) && !nullable && kind != FileSqlKind::NULL_VALUE) {
+        column_item->expr_->set_result_flag(NOT_NULL_FLAG);
+      }
+    }
+  }
+  seekdb_file_bound_close(bound);
+  return ret;
+}
+
 int ObDMLResolver::resolve_function_table_item(const ParseNode &parse_tree,
                                                TableItem *&tbl_item)
 {
+  if (parse_tree.num_child_ == 3) {
+    return resolve_file_table_item(parse_tree, tbl_item);
+  }
   int ret = OB_SUCCESS;
   ObDMLStmt *stmt = get_stmt();
   ParseNode *alias_node = NULL;
@@ -3946,6 +4084,9 @@ int ObDMLResolver::resolve_function_table_item(const ParseNode &parse_tree,
     OX (alias_node = parse_tree.children_[1]);
   }
   CK (OB_NOT_NULL(function_table_expr));
+  if (OB_SUCC(ret) && !file_sql_descriptor(function_table_expr).empty()) {
+    ret = OB_ERR_WRONG_FUNC_ARGUMENTS_TYPE;
+  }
   OZ (function_table_expr->deduce_type(session_info_));
   if (OB_SUCC(ret)) {
     if (function_table_expr->get_result_type().is_ext()) {
@@ -7475,7 +7616,15 @@ int ObDMLResolver::resolve_function_table_column_item(const TableItem &table_ite
   CK (OB_LIKELY(table_item.is_function_table()));
   CK (OB_NOT_NULL(table_item.function_table_expr_));
   if (OB_SUCC(ret)) {
-    if (table_item.function_table_expr_->get_result_type().is_ext()) {
+    if (!file_sql_descriptor(table_item.function_table_expr_).empty()) {
+      const ObDMLStmt *stmt = get_stmt();
+      for (int64_t i = 0; OB_SUCC(ret) && i < stmt->get_column_size(); ++i) {
+        const ColumnItem *column = stmt->get_column_item(i);
+        if (column != nullptr && column->table_id_ == table_item.table_id_) {
+          OZ(col_items.push_back(*column));
+        }
+      }
+    } else if (table_item.function_table_expr_->get_result_type().is_ext()) {
       ret = resolve_function_table_column_item_udf(table_item, col_items);
     } else {
       ret = resolve_function_table_column_item_sys_func(table_item, col_items);
@@ -8368,9 +8517,17 @@ int ObDMLResolver::get_columns_from_table_item(const TableItem *table_item, ObIA
       }
     }
   } else if (table_item->is_function_table()) {
-    OZ (ObResolverUtils::get_all_function_table_column_names(*table_item,
+    if (!file_sql_descriptor(table_item->function_table_expr_).empty()) {
+      ObSEArray<ColumnItem, 16> columns;
+      OZ(resolve_function_table_column_item(*table_item, columns));
+      for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+        OZ(column_names.push_back(columns.at(i).column_name_));
+      }
+    } else {
+      OZ (ObResolverUtils::get_all_function_table_column_names(*table_item,
                                                              params_,
                                                              column_names));
+    }
   } else if (table_item->is_basic_table() || table_item->is_fake_cte_table()) {
     /**
      * LINK_TABLE and CTE_TABLE is same as BASIC_TABLE or ALIAS_TABLE

@@ -19,6 +19,8 @@
 #include "sql/engine/basic/ob_function_table_op.h"
 #include "sql/engine/ob_exec_context.h"
 #include "sql/engine/expr/ob_expr_lob_utils.h"
+#include "sql/resolver/expr/ob_raw_expr.h"
+#include "sql/session/ob_sql_session_info.h"
 
 
 namespace oceanbase
@@ -27,14 +29,147 @@ using namespace common;
 namespace sql
 {
 
-OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_);
+OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
+                    file_descriptor_, file_columns_);
+
+ObString file_sql_descriptor(const ObRawExpr *expr)
+{
+  ObString descriptor;
+  if (expr != nullptr && expr->get_expr_type() == T_VARCHAR && expr->is_const_expr()) {
+    const ObObj &value = static_cast<const ObConstRawExpr *>(expr)->get_value();
+    const ObString prefix(FILE_SQL_DESCRIPTOR_PREFIX);
+    if (value.is_varchar() && value.get_varchar().prefix_match(prefix)) {
+      const ObString data = value.get_varchar();
+      descriptor.assign_ptr(data.ptr() + prefix.length(), data.length() - prefix.length());
+    }
+  }
+  return descriptor;
+}
+
+int file_sql_error(const char *message)
+{
+  LOG_USER_ERROR(OB_NOT_SUPPORTED, message);
+  return OB_NOT_SUPPORTED;
+}
+
+int get_file_sql_root(const ObSQLSessionInfo *session, ObString &root)
+{
+  int ret = OB_SUCCESS;
+  bool enabled = false;
+  if (OB_ISNULL(session)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(session->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+  } else if (!enabled) {
+    ret = file_sql_error("file SQL is disabled (enable_file_sql is OFF)");
+  } else if (OB_FAIL(session->get_secure_file_priv(root))) {
+  }
+  return ret;
+}
+
+int ObFunctionTableOp::open_file_scan()
+{
+  int ret = OB_SUCCESS;
+  ObString root;
+  char error[512] = {};
+  seekdb_file_close(file_scan_);
+  file_scan_ = nullptr;
+  if (OB_FAIL(get_file_sql_root(ctx_.get_my_session(), root))) {
+  } else if (OB_ISNULL(file_scan_ = seekdb_file_open(
+                 FileSqlSpan::from(MY_SPEC.file_descriptor_), FileSqlSpan::from(root),
+                 MY_SPEC.file_columns_.count() == 0 ? nullptr : &MY_SPEC.file_columns_.at(0),
+                 MY_SPEC.file_columns_.count(), error, sizeof(error)))) {
+    ret = file_sql_error(error);
+  }
+  return ret;
+}
+
+int ObFunctionTableOp::inner_get_next_file_row()
+{
+  clear_evaluated_flag();
+  return read_file_row();
+}
+
+int ObFunctionTableOp::read_file_row()
+{
+  int ret = OB_SUCCESS;
+  char error[512] = {};
+  if (OB_ISNULL(file_scan_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(ctx_.check_status())) {
+  } else {
+    const int found = seekdb_file_next(file_scan_, error, sizeof(error));
+    if (found < 0) {
+      ret = file_sql_error(error);
+    } else if (found == 0) {
+      ret = OB_ITER_END;
+    }
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.column_exprs_.count(); ++i) {
+    ObExpr &expr = *MY_SPEC.column_exprs_.at(i);
+    ObDatum &datum = expr.locate_datum_for_write(eval_ctx_);
+    int64_t integer = 0;
+    double real = 0;
+    FileSqlSpan text{};
+    const FileSqlKind kind = seekdb_file_cell(file_scan_, i, integer, real, text);
+    if (kind == FileSqlKind::NULL_VALUE) {
+      datum.set_null();
+    } else if (kind == FileSqlKind::DOUBLE) {
+      datum.set_double(real);
+    } else if (kind == FileSqlKind::VARCHAR) {
+      char *buffer = expr.get_str_res_mem(eval_ctx_, text.len_ + 1);
+      if (OB_ISNULL(buffer)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        if (text.len_ > 0) {
+          MEMCPY(buffer, text.data_, text.len_);
+        }
+        datum.set_string(ObString(static_cast<int32_t>(text.len_), buffer));
+      }
+    } else if (expr.datum_meta_.type_ == ObDateType) {
+      datum.set_date(static_cast<int32_t>(integer));
+    } else if (expr.datum_meta_.type_ == ObDateTimeType) {
+      datum.set_datetime(integer);
+    } else {
+      datum.set_int(integer);
+    }
+    if (OB_SUCC(ret)) {
+      expr.set_evaluated_projected(eval_ctx_);
+    }
+  }
+  return ret;
+}
+
+int FileTableOp::inner_get_next_batch(int64_t max_row_cnt)
+{
+  int ret = OB_SUCCESS;
+  clear_evaluated_flag();
+  brs_.size_ = 0;
+  brs_.skip_->reset(max_row_cnt);
+  ObEvalCtx::BatchInfoScopeGuard batch(eval_ctx_);
+  batch.set_batch_size(max_row_cnt);
+  while (OB_SUCC(ret) && brs_.size_ < max_row_cnt) {
+    batch.set_batch_idx(brs_.size_);
+    if (OB_FAIL(read_file_row())) {
+    } else {
+      ++brs_.size_;
+    }
+  }
+  if (ret == OB_ITER_END) {
+    brs_.end_ = brs_.size_ == 0;
+    ret = OB_SUCCESS;
+  }
+  return ret;
+}
 
 int ObFunctionTableOp::inner_open()
 {
   int ret = OB_SUCCESS;
   node_idx_ = 0;
   already_calc_ = false;
-  if (OB_ISNULL(MY_SPEC.value_expr_)) {
+  if (!MY_SPEC.file_descriptor_.empty()) {
+    next_row_func_ = &ObFunctionTableOp::inner_get_next_file_row;
+    ret = open_file_scan();
+  } else if (OB_ISNULL(MY_SPEC.value_expr_)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (ObExtendType == MY_SPEC.value_expr_->datum_meta_.type_) {
     next_row_func_ = &ObFunctionTableOp::inner_get_next_row_udf;
@@ -48,6 +183,8 @@ int ObFunctionTableOp::inner_rescan()
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(ObOperator::inner_rescan())) {
+  } else if (!MY_SPEC.file_descriptor_.empty()) {
+    ret = open_file_scan();
   } else {
     node_idx_ = 0;
     if (MY_SPEC.has_correlated_expr_) {
@@ -63,6 +200,8 @@ int ObFunctionTableOp::inner_rescan()
 int ObFunctionTableOp::inner_close()
 {
   int ret = OB_SUCCESS;
+  seekdb_file_close(file_scan_);
+  file_scan_ = nullptr;
   node_idx_ = 0;
   row_count_ = 0;
   col_count_ = 0;
@@ -72,6 +211,8 @@ int ObFunctionTableOp::inner_close()
 
 void ObFunctionTableOp::destroy()
 {
+  seekdb_file_close(file_scan_);
+  file_scan_ = nullptr;
   ObOperator::destroy();
 }
 

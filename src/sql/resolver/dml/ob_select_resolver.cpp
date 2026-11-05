@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/ob_file_sql.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/dml/ob_del_upd_resolver.h"
 #include "share/ob_time_utility2.h"
@@ -3081,6 +3082,64 @@ int ObSelectResolver::resolve_into_outfile_without_format(const ParseNode *node,
   return ret;
 }
 
+static int resolve_file_copy_options(const ParseNode *options, ObSelectIntoItem &item)
+{
+  int ret = OB_SUCCESS;
+  item.is_file_copy_ = true;
+  item.is_optional_ = false;
+  item.field_str_.set_varchar(ObString(","));
+  item.line_str_.set_varchar(ObString(""));
+  item.closed_cht_.set_varchar(ObString("\""));
+  item.escaped_cht_.set_varchar(ObString("\""));
+  uint32_t seen = 0;
+  for (int64_t i = 0; OB_SUCC(ret) && options != nullptr && i < options->num_child_; ++i) {
+    const ParseNode *entry = options->children_[i];
+    const ParseNode *key = entry->children_[0];
+    const ParseNode *value = entry->children_[1];
+    const ObString name(key->str_len_, key->str_value_);
+    const ObString text(value == nullptr ? 0 : value->str_len_,
+                        value == nullptr ? nullptr : value->str_value_);
+    int option = -1;
+    if (name.case_compare("format") == 0 && text.case_compare("csv") == 0) {
+      option = 0;
+    } else if (name.case_compare("header") == 0
+               && (value == nullptr || value->type_ == T_BOOL
+                   || (value->type_ == T_INT && (value->value_ == 0 || value->value_ == 1)))) {
+      option = 1;
+      item.is_optional_ = value == nullptr || value->value_ != 0;
+    } else if (value != nullptr && value->type_ == T_VARCHAR) {
+      if (name.case_compare("delimiter") == 0 || name.case_compare("delim") == 0
+          || name.case_compare("sep") == 0) {
+        option = 2;
+        item.field_str_.set_varchar(text);
+      } else if (name.case_compare("quote") == 0) {
+        option = 3;
+        item.closed_cht_.set_varchar(text);
+      } else if (name.case_compare("escape") == 0) {
+        option = 4;
+        item.escaped_cht_.set_varchar(text);
+      } else if (name.case_compare("nullstr") == 0 || name.case_compare("null") == 0) {
+        option = 5;
+        item.line_str_.set_varchar(text);
+      }
+    }
+    if (option < 0 || ((seen >> option) & 1) != 0) {
+      ret = file_sql_error("invalid or repeated COPY option");
+    } else {
+      seen |= (1U << option);
+    }
+  }
+  if ((seen & (1U << 4)) == 0) {
+    item.escaped_cht_ = item.closed_cht_;
+  }
+  if (OB_SUCC(ret)
+      && (item.field_str_.get_varchar().length() != 1 || item.closed_cht_.get_varchar().length() > 1
+          || item.escaped_cht_.get_varchar().length() > 1)) {
+    ret = file_sql_error("COPY requires single-byte CSV delimiter, quote, and escape options");
+  }
+  return ret;
+}
+
 int ObSelectResolver::resolve_into_clause(const ParseNode *node)
 {
   int ret = OB_SUCCESS;
@@ -3107,6 +3166,15 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
       if (T_INTO_OUTFILE == node->type_) { // into outfile
         if (is_in_set_query()) {
           ret = OB_INAPPROPRIATE_INTO;
+        } else if (node->num_child_ == 2) {
+          ObString root;
+          if (OB_FAIL(get_file_sql_root(session_info_, root))) {
+          } else if (OB_FAIL(resolve_into_const_node(node->children_[0], into_item->outfile_name_))) {
+          } else if (OB_FAIL(resolve_file_copy_options(node->children_[1], *into_item))) {
+          } else {
+            select_stmt->get_query_ctx()->has_file_sql_ = true;
+            select_stmt->get_query_ctx()->disable_udf_parallel_ = true;
+          }
         } else if (node->num_child_ == 3 && NULL != node->children_[1]
             && T_EXTERNAL_FILE_FORMAT == node->children_[1]->type_) { // Handle with `FORMAT`
           if (OB_FAIL(resolve_into_outfile_with_format(node, *into_item))) {

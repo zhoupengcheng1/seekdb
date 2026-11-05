@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/ob_file_sql.h"
 #include "ob_column_namespace_checker.h"
 #include "sql/resolver/dml/ob_dml_resolver.h"
 
@@ -313,7 +314,13 @@ int ObColumnNamespaceChecker::check_column_exists(const TableItem &table_item, c
         table_id, col_name, is_exist))) {
     }
   } else if (table_item.is_function_table()) {
-    if (OB_FAIL(ObResolverUtils::check_function_table_column_exist(table_item,
+    if (!file_sql_descriptor(table_item.function_table_expr_).empty()) {
+      for (int64_t i = 0; dml_stmt_ != nullptr && !is_exist && i < dml_stmt_->get_column_size(); ++i) {
+        const ColumnItem *column = dml_stmt_->get_column_item(i);
+        is_exist = column != nullptr && column->table_id_ == table_item.table_id_
+                   && ObCharset::case_insensitive_equal(column->column_name_, col_name);
+      }
+    } else if (OB_FAIL(ObResolverUtils::check_function_table_column_exist(table_item,
                                                                    params_,
                                                                    col_name))) {
     } else {

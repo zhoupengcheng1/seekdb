@@ -23,6 +23,7 @@
 #include "sql/engine/basic/ob_select_into_basic.h"
 #include "sql/engine/basic/ob_external_file_writer.h"
 #include "sql/resolver/dml/ob_select_stmt.h"
+#include "sql/engine/basic/ob_file_sql.h"
 
 namespace oceanbase
 {
@@ -71,7 +72,8 @@ public:
       parallel_(1),
       buffer_size_(DEFAULT_BUFFER_SIZE),
       is_overwrite_(false),
-      external_properties_(alloc)
+      external_properties_(alloc),
+      file_copy_headers_(alloc)
   {
   }
 
@@ -91,6 +93,8 @@ public:
   int64_t buffer_size_;
   bool is_overwrite_;
   ObExternalFileFormat::StringData external_properties_;
+  bool is_file_copy_ = false;
+  common::ObFixedArray<common::ObString, common::ObIAllocator> file_copy_headers_;
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256LL * 1024 * 1024;
   static const int64_t DEFAULT_BUFFER_SIZE = 1LL * 1024 * 1024;
 };
@@ -195,6 +199,9 @@ public:
   virtual void destroy() override;
 
 private:
+  int open_file_copy();
+  int execute_file_copy();
+  FileSqlCopy *file_copy_ = nullptr;
   int init_env_common();
   int init_csv_env();
   void set_csv_format_options();

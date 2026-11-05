@@ -11,6 +11,12 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 kv = { path = "../kv" }
 cxx = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+glob = "0.3"
+libc = "0.2"
+parquet = { version = "56.2.0", default-features = false, features = ["snap"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 
 [build-dependencies]
 cxx-build = "1"
