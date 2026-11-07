@@ -385,6 +385,8 @@ END_P SET_VAR DELIMITER
 %type <node> drop_table_stmt table_list drop_view_stmt table_or_tables
 %type <node> explain_stmt explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
 %type <node> expr_list expr expr_const conf_const simple_expr simple_expr_list expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
+%type <node> opt_ai_column_options
+%type <node> opt_ai_retry_actions
 %type <node> column_ref multi_delete_table
 %type <node> case_expr func_expr in_expr sub_query_flag search_expr
 %type <node> case_arg when_clause_list when_clause case_default
@@ -4842,6 +4844,13 @@ column_definition_ref data_type opt_column_attribute_list opt_column_reference o
   set_data_type_collation($2, attributes, false, true);
   malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 4, $1, $2, attributes, $5);
 }
+| column_definition_ref data_type AI COLUMN '(' expr ')' opt_ai_column_options opt_position_column
+{
+  ParseNode *attributes = NULL;
+  set_data_type_collation($2, attributes, false, true);
+  dup_expr_string($6, result, @6.first_column, @6.last_column);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 6, $1, $2, NULL, $9, $6, $8);
+}
 | column_definition_ref data_type opt_collation opt_generated_keyname AS '(' expr ')' opt_storage_type opt_generated_column_attribute_list opt_column_reference opt_position_column
 {
   (void)($11);
@@ -4876,6 +4885,28 @@ column_definition_ref data_type opt_column_attribute_list opt_column_reference o
   malloc_non_terminal_node(attributes, result->malloc_pool_, T_LINK_NODE, 2, attributes, unique_attr);
   merge_nodes(attributes, result, T_COLUMN_ATTRIBUTES, attributes);
   malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 4, $1, unsigned_bigint_type, attributes, $4);
+}
+;
+
+opt_ai_column_options:
+WITH '(' expr_list ')'
+{
+  $$ = $3;
+}
+| /* empty */
+{
+  $$ = NULL;
+}
+;
+
+opt_ai_retry_actions:
+',' alter_table_action_list
+{
+  $$ = $2;
+}
+| /* empty */
+{
+  $$ = NULL;
 }
 ;
 
@@ -12742,6 +12773,14 @@ SHOW opt_extended_or_full TABLES opt_from_or_in_database_clause opt_show_conditi
   $$->value_ = $2[0];
   malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, $$, $5, $6, $7);
 }
+| SHOW AI columns_or_fields from_or_in relation_factor opt_from_or_in_database_clause
+{
+  (void)$3;
+  (void)$4;
+  ParseNode *mode = NULL;
+  malloc_terminal_node(mode, result->malloc_pool_, T_INT);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 5, mode, $5, $6, NULL, NULL);
+}
 | SHOW TABLE STATUS opt_from_or_in_database_clause opt_show_condition
 { malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_TABLE_STATUS, 2, $4, $5); }
 | SHOW PROCEDURE STATUS opt_from_or_in_database_clause opt_show_condition
@@ -14755,6 +14794,17 @@ alter_with_opt_hint TABLE relation_factor alter_table_actions
   merge_nodes(table_actions, result, T_ALTER_TABLE_ACTION_LIST, $4);
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALTER_TABLE, 4, $3, table_actions, NULL, $1);
   $$->value_ = 0;
+}
+| alter_with_opt_hint TABLE relation_factor NAME_OB AI COLUMN column_name opt_where opt_ai_retry_actions
+{
+  if (NULL == $4->str_value_ || $4->is_input_quoted_ || 0 != strcasecmp($4->str_value_, "retry")) {
+    yyerror(&@4, result, "expected RETRY AI COLUMN");
+    YYABORT;
+  }
+  ParseNode *from_list = NULL;
+  merge_nodes(from_list, result, T_TABLE_REFERENCES, $3);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_UPDATE, 12,
+                           NULL, from_list, NULL, $8, NULL, NULL, NULL, $1, NULL, NULL, $9, $7);
 }
 ;
 

@@ -978,6 +978,7 @@ void ObServer::destroy()
 
     FLOG_INFO("begin to destroy sql memory manager timer");
     sql_mem_timer_.destroy();
+    ai_column_timer_.destroy();
     FLOG_INFO("sql memory manager timer destroyed");
 
     FLOG_INFO("begin to destroy ctas clean up timer");
@@ -1325,6 +1326,9 @@ int ObServer::start()
       FLOG_INFO("server metadata is ready");
     }
 
+    if (OB_SUCC(ret)) {
+      ret = ai_column_worker_.schedule(ai_column_timer_, sql_proxy_, schema_service_);
+    }
     if (FAILEDx(net_frame_.start())) {
       LOG_ERROR("fail to start net frame", KR(ret));
     } else {
@@ -1588,6 +1592,8 @@ int ObServer::stop()
     FLOG_INFO("sql nio stopped");
 
 
+    ai_column_timer_.stop();
+    ai_column_timer_.wait();
     FLOG_INFO("begin to stop schema service");
     schema_service_.stop();
     FLOG_INFO("schema service stopped");
@@ -1941,6 +1947,7 @@ int ObServer::init_config_module()
     LOG_ERROR("local address isn't valid", K(self_addr_), KR(ret));
   } else if (OB_FAIL(server_gtimer_.init("ServerGTimer", ObMemAttr("ServerGTimer")))) {
   } else if (OB_FAIL(sql_mem_timer_.init("SqlMemTimer", ObMemAttr("SqlMemTimer")))) {
+  } else if (OB_FAIL(ai_column_timer_.init("AiColumnTimer", ObMemAttr("AiColumnTimer")))) {
   } else if (OB_FAIL(ctas_clean_up_timer_.init("CTASCleanUp", ObMemAttr("CTASCleanUp")))) {
   }
 

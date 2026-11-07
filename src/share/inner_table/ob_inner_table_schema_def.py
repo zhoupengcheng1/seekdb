@@ -342,7 +342,11 @@ all_column_def = dict(
       ('sub_data_type', 'int', 'false', '0'),
       ('skip_index_attr', 'int', 'false', '0'),
       ('lob_chunk_size', 'int', 'false', 'OB_DEFAULT_LOB_CHUNK_SIZE'),
-      ('local_session_vars', 'longtext', 'true')
+      ('local_session_vars', 'longtext', 'true'),
+      ('ai_column_expr', 'longtext', 'true'),
+      ('ai_column_type_prompt', 'varchar:512', 'true'),
+      ('ai_column_max_retries', 'int', 'false', '0'),
+      ('ai_column_dependencies', 'varbinary:OB_MAX_VARBINARY_LENGTH', 'true')
   ]
   )
 
@@ -2446,6 +2450,32 @@ all_ai_model_endpoint_def = dict(
 )
 def_table_schema(**all_ai_model_endpoint_def)
 
+# 1131: __all_ai_column_task
+def_table_schema(
+    owner = 'seekdb',
+    table_name = '__all_ai_column_task',
+    table_id = '1131',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    rowkey_columns = [
+      ('table_id', 'int'),
+      ('rowkey_digest', 'varchar:64'),
+      ('column_id', 'int')
+    ],
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    normal_columns = [
+      ('request_id', 'varchar:36', 'false'),
+      ('definition_version', 'int', 'false'),
+      ('rowkey_predicate', 'longtext', 'false'),
+      ('state', 'int', 'false'),
+      ('eligible_ts', 'timestamp:6', 'false'),
+      ('retry_count', 'int', 'false', '0'),
+      ('result_payload', 'longtext', 'true'),
+      ('lease_id', 'varchar:36', 'true'),
+      ('lease_expires', 'timestamp:6', 'true')
+    ]
+)
 
 all_objauth_mysql_def = dict(
     owner = 'cjl476581',
@@ -13863,6 +13893,35 @@ def_table_schema(
       FETCH_LSN,
       FETCH_SCN
     FROM oceanbase.__all_virtual_change_stream_refresh_stat
+  """.replace("\n", " ")
+)
+
+# 21669: __all_ai_column
+def_table_schema(
+  owner = 'seekdb',
+  database_id = 'OB_SYS_DATABASE_ID',
+  table_name = '__all_ai_column',
+  table_id = '21669',
+  table_type = 'SYSTEM_VIEW',
+  gm_columns = [],
+  rowkey_columns = [],
+  normal_columns = [],
+  view_definition = """
+    SELECT c.table_id, c.column_id, c.column_name, c.ai_column_max_retries AS max_retries,
+           CONCAT(c.ai_column_expr, ' ', COALESCE(c.ai_column_type_prompt, '')) AS normalized_expr,
+           s.column_id AS state_column_id, r.column_id AS request_column_id,
+           p.column_id AS result_spec_column_id
+    FROM oceanbase.__all_column c
+    JOIN oceanbase.__all_table t ON t.table_id = c.table_id
+    JOIN oceanbase.__all_database d ON d.database_id = t.database_id
+    JOIN oceanbase.__all_column s ON s.table_id = c.table_id AND s.is_hidden = 1
+                                 AND s.column_name = CONCAT('__ai_state$', c.column_name)
+    JOIN oceanbase.__all_column r ON r.table_id = c.table_id AND r.is_hidden = 1
+                                 AND r.column_name = CONCAT('__ai_request$', c.column_name)
+    JOIN oceanbase.__all_column p ON p.table_id = c.table_id AND p.is_hidden = 1
+                                 AND p.column_name = CONCAT('__ai_result_spec$', c.column_name)
+    WHERE LENGTH(c.ai_column_expr) > 0 AND c.is_hidden = 0 AND d.database_name <> '__recyclebin'
+      AND 0 = sys_privilege_check('table_acc', d.database_name, t.table_name)
   """.replace("\n", " ")
 )
 

@@ -253,6 +253,8 @@ public:
                                    SeRowkeyDistCtx *&rowkey_dist_ctx);
   static int handle_after_processing_single_row(ObDMLModifyRowsList *dml_modify_rows);
   static int handle_after_processing_single_row(ObDMLModifyRowNode &modify_row);
+  static int process_ai_column_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &ctdef,
+                                     ObDmlEventType event);
   static int handle_after_processing_multi_row(ObDMLModifyRowsList *dml_modify_rows, ObTableModifyOp *op);
   // static int handle_after_processing_batch(const ObTableModifyOp *op,
   //                                           ObDMLModifyRowsList *dml_modify_rows);

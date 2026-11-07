@@ -7427,9 +7427,19 @@ int ObDDLService::fill_new_column_attributes(
 {
   int ret = OB_SUCCESS;
   int64_t new_schema_version = OB_INVALID_VERSION;
-  
-  if (OB_FAIL(schema_service_->gen_new_schema_version(new_schema_version))) {
+
+  if (new_column_schema.is_ai_column() != alter_column_schema.is_ai_column()
+      || (new_column_schema.is_ai_column()
+          && new_column_schema.get_column_name_str() != alter_column_schema.get_column_name_str())) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "converting or renaming an AI column is");
+  } else if (OB_FAIL(schema_service_->gen_new_schema_version(new_schema_version))) {
+  } else if (new_column_schema.is_ai_column()
+             && OB_FAIL(new_column_schema.set_ai_column_expr(alter_column_schema.get_ai_column_expr()))) {
+  } else if (new_column_schema.is_ai_column()
+             && OB_FAIL(new_column_schema.set_ai_column_dependencies(alter_column_schema.get_ai_column_dependencies()))) {
   } else {
+    new_column_schema.set_ai_column_max_retries(alter_column_schema.get_ai_column_max_retries());
     new_column_schema.set_column_name(alter_column_schema.get_column_name_str());
     new_column_schema.set_charset_type(alter_column_schema.get_charset_type());
     new_column_schema.set_collation_type(alter_column_schema.get_collation_type());

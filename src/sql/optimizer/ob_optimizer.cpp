@@ -974,7 +974,7 @@ int ObOptimizer::check_whether_contain_nested_sql(const ObDMLStmt &stmt)
         if (OB_FAIL(table_schema->check_has_trigger_on_table(*schema_guard,
                                                              trigger_exists,
                                                              del_upd_stmt->get_trigger_events()))) {
-        } else if (trigger_exists) {
+        } else if (trigger_exists || table_schema->has_ai_columns()) {
           ctx_.set_has_trigger(true);
         }
       }

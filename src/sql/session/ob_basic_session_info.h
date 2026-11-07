@@ -1924,7 +1924,10 @@ inline bool ObBasicSessionInfo::get_local_ob_enable_pl_cache() const
 
 inline bool ObBasicSessionInfo::get_local_ob_enable_plan_cache() const
 {
-  return sys_vars_cache_.get_ob_enable_plan_cache();
+  bool strict_ai_read = false;
+  return sys_vars_cache_.get_ob_enable_plan_cache()
+      && (common::OB_SUCCESS != get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_ai_read)
+          || !strict_ai_read);
 }
 
 inline ObLengthSemantics ObBasicSessionInfo::get_default_length_semantics() const

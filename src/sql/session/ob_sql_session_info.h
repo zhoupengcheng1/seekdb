@@ -95,6 +95,7 @@ class ObPsSessionInfo;
 class ObPsStmtInfo;
 class ObStmt;
 class ObSQLSessionInfo;
+class AiColumnExecution;
 class ObPieceCache;
 class ObIQueryResultSender;
 class ObPlanItemMgr;
@@ -619,6 +620,8 @@ public:
   void set_session_type_with_flag();
   void set_session_type(SessionType session_type) { session_type_ = session_type; }
   inline SessionType get_session_type() const { return session_type_; }
+  const AiColumnExecution *get_ai_column_execution() const { return ai_column_execution_; }
+  void set_ai_column_execution(const AiColumnExecution *execution) { ai_column_execution_ = execution; }
   // sql from obclient, proxy, PL are all marked as user_session
   // NOTE: for sql from PL, is_inner() = true, is_user_session() = true
   inline bool is_user_session() const { return USER_SESSION == session_type_; }
@@ -1030,6 +1033,7 @@ private:
   void *tx_ctx_cache_;
   common::ObString audit_filter_name_;
   ObExecutingSqlStatRecord executing_sql_stat_record_;
+  const AiColumnExecution *ai_column_execution_ = nullptr;
 };
 
 

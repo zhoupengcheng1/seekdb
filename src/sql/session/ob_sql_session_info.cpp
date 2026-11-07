@@ -295,6 +295,7 @@ void ObSQLSessionInfo::reset(bool skip_sys_var)
     prelock_ = false;
     ddl_info_.reset();
     cur_exec_ctx_ = nullptr;
+    ai_column_execution_ = nullptr;
     // Process-lifetime dependencies are construction state, not connection
     // state. COM_RESET_CONNECTION must not silently detach them. These
     // compatibility fields are removed as their consumers move to the

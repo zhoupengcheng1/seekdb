@@ -45,6 +45,8 @@ public:
   virtual int resolve(const ParseNode &parse_tree);
   inline ObUpdateStmt *get_update_stmt() { return static_cast<ObUpdateStmt*>(stmt_); }
 private:
+  int resolve_ai_retry(const ParseNode &column, ParseNode *where, ObIArray<ObTableAssignment> &assignments);
+  int rewrite_ai_retry_status(ParseNode &expr);
   int resolve_table_list(const ParseNode &parse_tree);
   int generate_update_table_info(ObTableAssignment &table_assign);
   int check_multi_update_table_conflict();

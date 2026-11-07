@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/dml/ob_update_resolver.h"
+#include "sql/engine/expr/ob_expr_uuid.h"
 
 namespace oceanbase
 {
@@ -34,11 +35,80 @@ ObUpdateResolver::~ObUpdateResolver()
 {
 }
 
+int ObUpdateResolver::rewrite_ai_retry_status(ParseNode &expr)
+{
+  int ret = OB_SUCCESS;
+  if (expr.type_ == T_COLUMN_REF && expr.num_child_ == 3 && OB_ISNULL(expr.children_[0])
+      && OB_ISNULL(expr.children_[1]) && OB_NOT_NULL(expr.children_[2])) {
+    ParseNode &name = *expr.children_[2];
+    if (!name.is_input_quoted_ && 0 == ObString(name.str_len_, name.str_value_).case_compare("status")) {
+      name.str_value_ = ai_retry_state_name_.ptr();
+      name.str_len_ = ai_retry_state_name_.length();
+    }
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < expr.num_child_; ++i) {
+      if (OB_NOT_NULL(expr.children_[i])) {
+        ret = SMART_CALL(rewrite_ai_retry_status(*expr.children_[i]));
+      }
+    }
+  }
+  return ret;
+}
+
+int ObUpdateResolver::resolve_ai_retry(const ParseNode &column, ParseNode *where,
+                                      ObIArray<ObTableAssignment> &assignments)
+{
+  int ret = OB_SUCCESS;
+  const TableItem *table = get_update_stmt()->get_table_item(0);
+  const ObTableSchema *schema = nullptr;
+  const ObColumnSchemaV2 *result = nullptr;
+  const ObString name(column.str_len_, column.str_value_);
+  if (OB_ISNULL(table) || !table->is_basic_table()) {
+    ret = OB_NOT_SUPPORTED;
+  } else if (OB_FAIL(schema_checker_->get_table_schema(table->ref_id_, schema))) {
+  } else if (OB_ISNULL(schema) || OB_ISNULL(result = schema->get_column_schema(name))
+             || !result->is_ai_column() || result->is_hidden()) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "retrying a column that is not an AI column");
+  } else {
+    ObSqlString request_name;
+    ObSqlString state_name;
+    ColumnItem *request_column = nullptr;
+    ObConstRawExpr *request_expr = nullptr;
+    char uuid[UuidCommon::LENGTH_UUID + 1] = {};
+    ObString uuid_value;
+    OZ (request_name.append("__ai_request$"));
+    OZ (request_name.append(result->get_column_name_str()));
+    OZ (state_name.append("__ai_state$"));
+    OZ (state_name.append(result->get_column_name_str()));
+    OZ (ob_write_string(*allocator_, state_name.string(), ai_retry_state_name_));
+    OZ (resolve_basic_column_item(*table, request_name.string(), true, request_column));
+    OZ (ObExprUuid::gen_server_uuid(uuid, UuidCommon::LENGTH_UUID));
+    OZ (ob_write_string(*allocator_, ObString(UuidCommon::LENGTH_UUID, uuid), uuid_value));
+    OZ (ObRawExprUtils::build_const_string_expr(*params_.expr_factory_, ObVarcharType,
+                                               uuid_value, CS_TYPE_UTF8MB4_BIN, request_expr));
+    if (OB_SUCC(ret) && OB_NOT_NULL(where)) {
+      OZ (rewrite_ai_retry_status(*where));
+    }
+    if (OB_SUCC(ret)) {
+      ObAssignment assignment;
+      assignment.column_expr_ = request_column->expr_;
+      assignment.expr_ = request_expr;
+      OZ (add_assignment(assignments, table, request_column, assignment));
+    }
+  }
+  return ret;
+}
+
 int ObUpdateResolver::resolve(const ParseNode &parse_tree)
 {
   int ret = OB_SUCCESS;
   ObUpdateStmt *update_stmt = NULL;
   ObSEArray<ObTableAssignment, 2> tables_assign;
+  if (parse_tree.num_child_ == 12 && OB_NOT_NULL(parse_tree.children_[10])) {
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "combining AI COLUMN RETRY with another ALTER action");
+    return OB_NOT_SUPPORTED;
+  }
   if (T_UPDATE != parse_tree.type_
       || 3 > parse_tree.num_child_
       || OB_ISNULL(parse_tree.children_)
@@ -81,7 +151,9 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     current_scope_ = T_UPDATE_SCOPE;
     // resolve assignments
     ParseNode *assign_list = parse_tree.children_[UPDATE_LIST];
-    if (OB_ISNULL(assign_list) || OB_UNLIKELY(T_ASSIGN_LIST != assign_list->type_)) {
+    if (parse_tree.num_child_ == 12 && OB_NOT_NULL(parse_tree.children_[11])) {
+      ret = resolve_ai_retry(*parse_tree.children_[11], parse_tree.children_[WHERE], tables_assign);
+    } else if (OB_ISNULL(assign_list) || OB_UNLIKELY(T_ASSIGN_LIST != assign_list->type_)) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("invalid assign list node", K(assign_list));
     } else if (OB_FAIL(resolve_assignments(*assign_list,

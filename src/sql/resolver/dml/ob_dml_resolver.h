@@ -848,6 +848,8 @@ protected:
 
 protected:
   ObStmtScope current_scope_;
+  ObString ai_retry_state_name_;
+  int check_ai_column_read(const ColumnItem &column);
   int32_t current_level_;
   bool field_list_first_;
   ObDMLResolver *parent_namespace_resolver_;

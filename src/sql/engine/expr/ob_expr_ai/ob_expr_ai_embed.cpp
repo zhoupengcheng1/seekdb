@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_ENG
 #include "ob_expr_ai_embed.h"
+#include "ob_ai_column_execution.h"
 #include "query/ai/ob_ai_endpoint_resolver.h"
 #include "share/rc/ob_server_runtime.h"
 
@@ -130,7 +131,8 @@ int ObExprAIEmbed::eval_ai_embed(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &re
     } else if (model_id.empty() || text.empty()) {
       ret = OB_INVALID_ARGUMENT;
     } else if (OB_FAIL(contents.push_back(text))) {
-    } else if (OB_FAIL(embed_input_batch(allocator, model_id, dim == nullptr ? 0 : dim->get_int(), contents, results))) {
+    } else if (OB_FAIL(embed_input_batch(allocator, model_id,
+                        dim == nullptr ? AiColumnExecution::dimension(ctx.exec_ctx_.get_my_session()) : dim->get_int(), contents, results))) {
     } else if (results.count() != 1) {
       ret = OB_INVALID_DATA;
     } else if (OB_FAIL(ObAIFuncUtils::set_string_result(expr, ctx, res, results.at(0)))) {
@@ -170,7 +172,7 @@ int ObExprAIEmbed::eval_ai_embed_batch(const ObExpr &expr, ObEvalCtx &ctx,
       } else {
         ObString model_id = models.at(row)->get_string();
         ObString text;
-        int64_t dimension = 0;
+        int64_t dimension = AiColumnExecution::dimension(ctx.exec_ctx_.get_my_session());
         batch_guard.set_batch_idx(row);
         if (expr.arg_cnt_ == 3) {
           if (dimensions.at(row)->is_null() || dimensions.at(row)->get_int() <= 0) {

@@ -3457,6 +3457,15 @@ int ObAlterTableResolver::resolve_add_column(const ParseNode &node, ObColumnName
         if (OB_SUCC(ret)) {
           if (OB_FAIL(alter_table_stmt->add_column(alter_column_schema))) {
           } else if (FALSE_IT(alter_table_stmt->set_sql_mode(session_info_->get_sql_mode()))) {
+          } else if (alter_column_schema.is_ai_column()) {
+            for (int64_t index = 0; OB_SUCC(ret) && index < 3; ++index) {
+              AlterColumnSchema companion;
+              companion.alter_type_ = OB_DDL_ADD_COLUMN;
+              if (OB_FAIL(init_ai_column_companion(alter_column_schema, index, companion))) {
+              } else {
+                ret = alter_table_stmt->add_column(companion);
+              }
+            }
           }
         }
       }
@@ -3541,6 +3550,9 @@ int ObAlterTableResolver::resolve_alter_table_column_definition(AlterColumnSchem
   // }
   if (OB_SUCC(ret)) {
     ParseNode *pos_node = NULL;
+    if (AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
+      ret = resolve_ai_column_dependencies(*node->children_[4], column, *table_schema_);
+    }
     if (OB_UNLIKELY(GEN_COLUMN_DEFINITION_NUM_CHILD == node->num_child_)) {
     // generated column with pos_column
       pos_node = node->children_[5];

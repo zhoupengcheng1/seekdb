@@ -355,8 +355,8 @@ public:
   {}
    virtual ~ObAIFuncModel() {}
    // completion
-   int call_completion(ObString &prompt, ObJsonObject *config, ObString &result);
-   int call_completion_vector(ObArray<ObString> &prompts, ObJsonObject *config, ObArray<ObString> &results);
+   int call_completion(ObString &prompt, ObJsonObject *config, ObString &result, const ObString &system_prompt = ObString());
+   int call_completion_vector(ObArray<ObString> &prompts, ObJsonObject *config, ObArray<ObString> &results, const ObString &system_prompt = ObString());
    // dense_embedding
    int call_dense_embedding(ObString &content, ObJsonObject *config, ObString &result);
    int call_dense_embedding_vector(ObArray<ObString> &contents, ObJsonObject *config, ObArray<ObString> &results);

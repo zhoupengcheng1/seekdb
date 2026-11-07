@@ -24,6 +24,7 @@
 #include "sql/parser/parse_malloc.h"
 #include "query/vector/ob_vector_index_util.h"
 #include "sql/das/ob_domain_id.h"
+#include "sql/engine/expr/ob_expr_ai/ob_ai_column_execution.h"
 
 namespace oceanbase
 {
@@ -68,6 +69,33 @@ ObDelUpdResolver::ObDelUpdResolver(ObResolverParams &params)
 ObDelUpdResolver::~ObDelUpdResolver()
 {
   // TODO Auto-generated destructor stub
+}
+
+int ObDelUpdResolver::is_ai_result_column(const ColumnItem &column, bool &is_ai_column)
+{
+  int ret = OB_SUCCESS;
+  is_ai_column = false;
+  const ObColumnSchemaV2 *schema = nullptr;
+  if (OB_INVALID_ID != column.base_tid_ && OB_INVALID_ID != column.base_cid_) {
+    if (OB_FAIL(get_column_schema(column.base_tid_, column.base_cid_, schema, true))) {
+    } else if (OB_NOT_NULL(schema)) {
+      is_ai_column = schema->is_ai_column();
+    }
+  }
+  return ret;
+}
+
+int ObDelUpdResolver::check_ai_result_assignment(const ColumnItem &column)
+{
+  int ret = OB_SUCCESS;
+  bool is_ai_column = false;
+  if (AiColumnExecution::writing(session_info_)) {
+  } else if (OB_FAIL(is_ai_result_column(column, is_ai_column))) {
+  } else if (is_ai_column) {
+    ret = OB_OP_NOT_ALLOW;
+    LOG_USER_ERROR(OB_OP_NOT_ALLOW, "assignment to an AI result column is");
+  }
+  return ret;
 }
 
 int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
@@ -129,7 +157,8 @@ int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
         ObRawExpr *expr = value_list.at(i);
         bool is_generated_column = true;
         // Mysql only allows updating generated columns to their default value
-        if (OB_FAIL(check_basic_column_generated(ref_expr, stmt, is_generated_column))) {
+        if (OB_FAIL(check_ai_result_assignment(*column))) {
+        } else if (OB_FAIL(check_basic_column_generated(ref_expr, stmt, is_generated_column))) {
         } else {
           if (T_DEFAULT == expr->get_expr_type()) {
             ObDefaultValueUtils utils(stmt, &params_, this);
@@ -538,7 +567,8 @@ int ObDelUpdResolver::resolve_additional_assignments(ObIArray<ObTableAssignment>
                                             ((column_schema->is_vec_hnsw_vid_column() ||
                                               column_schema->is_vec_ivf_center_id_column()) && 
                                              (update_with_vector_index || T_INSERT_SCOPE == scope)))) {
-        } else if (need_assigned) {
+        } else if (need_assigned
+                   && !(AiColumnExecution::writing(session_info_) && column_schema->is_on_update_current_timestamp())) {
           // for insert scope, on duplicate key update column list already
           // exists in insert list, therefore, only need to add assignment.
           // add assign
@@ -1099,6 +1129,7 @@ bool ObDelUpdResolver::need_all_columns(const ObTableSchema &table_schema,
 {
   // Returns true for MINIMAL too because the optimizer currently needs full rows.
   return (table_schema.is_table_without_pk() ||
+          table_schema.has_ai_columns() ||
           table_schema.get_foreign_key_infos().count() > 0 ||
           table_schema.get_trigger_list().count() > 0 ||
           table_schema.has_check_constraint() ||
@@ -2194,7 +2225,11 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
       for (int64_t i = 0; OB_SUCC(ret) && i < N; i++) {
         uint64_t column_id = column_items.at(i).column_id_;
         bool is_duplicate = false;
-        if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
+        bool is_ai_column = false;
+        if (OB_FAIL(is_ai_result_column(column_items.at(i), is_ai_column))) {
+        } else if (is_ai_column) {
+          continue;
+        } else if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
         } else if (is_duplicate) {
           ret = OB_ERR_FIELD_SPECIFIED_TWICE;
           ObCStringHelper helper;
@@ -2221,6 +2256,17 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
           if (OB_FAIL(check_same_base_table(*table_item, *column_item->expr_))) {
           }
         }
+      }
+    }
+  }
+  if (OB_SUCC(ret) && OB_NOT_NULL(node) && T_COLUMN_LIST == node->type_) {
+    for (int64_t i = 0; OB_SUCC(ret) && i < table_info.values_desc_.count(); ++i) {
+      const ObColumnRefRawExpr *desc = table_info.values_desc_.at(i);
+      const ColumnItem *column = del_upd_stmt->get_column_item_by_id(desc->get_table_id(), desc->get_column_id());
+      if (OB_ISNULL(column)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        ret = check_ai_result_assignment(*column);
       }
     }
   }

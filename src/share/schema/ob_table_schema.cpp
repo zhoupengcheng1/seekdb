@@ -2347,6 +2347,15 @@ ObColumnSchemaV2 *ObTableSchema::get_column_schema_by_name_internal(
   return column;
 }
 
+bool ObTableSchema::has_ai_columns() const
+{
+  bool found = false;
+  for (const_column_iterator it = column_begin(); !found && it != column_end(); ++it) {
+    found = nullptr != *it && !(*it)->is_hidden() && (*it)->is_ai_column();
+  }
+  return found;
+}
+
 const ObColumnSchemaV2 *ObTableSchema::get_column_schema(const ObString &column_name) const
 {
   return get_column_schema_by_name_internal(column_name);

@@ -59,6 +59,7 @@ enum NUMCHILD {
   COLUMN_DEFINITION_NUM_CHILD = 4,
   COLUMN_DEF_NUM_CHILD = 3,
   INDEX_NUM_CHILD = 5,
+  AI_COLUMN_DEFINITION_NUM_CHILD = 6,
   GEN_COLUMN_DEFINITION_NUM_CHILD = 7
 };
 
@@ -518,6 +519,14 @@ protected:
       const bool unused_flag = false,
       const bool is_create_table_as = false,
       const bool allow_has_default = true);
+  int resolve_ai_column_definition(ObColumnSchemaV2 &column, const ParseNode &node);
+  int resolve_ai_column_dependencies(const ParseNode &expr, ObColumnSchemaV2 &result,
+                                     const ObTableSchema &table);
+  int collect_ai_column_dependencies(const ParseNode &expr, const ObColumnSchemaV2 &result,
+                                     const ObTableSchema &table, common::ObStringBuffer &deps,
+                                     bool is_root);
+  int init_ai_column_companion(const ObColumnSchemaV2 &result, const int64_t index,
+                               ObColumnSchemaV2 &companion);
   int drop_not_null_constraint(const share::schema::ObColumnSchemaV2 &column);
   int resolve_normal_column_attribute_constr_not_null(ObColumnSchemaV2 &column,
                                                       ParseNode *attrs_node,

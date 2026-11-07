@@ -896,6 +896,28 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
       }
     }
 
+    for (int32_t i = 0; OB_SUCC(ret) && RESOLVE_NON_COL != resolve_rule && i < node->num_child_; ++i) {
+      ParseNode *element = node->children_[i];
+      if (T_COLUMN_DEFINITION == element->type_ && AI_COLUMN_DEFINITION_NUM_CHILD == element->num_child_) {
+        const ParseNode &name_node = *element->children_[0]->children_[2];
+        ObColumnSchemaV2 *result =
+            table_schema.get_column_schema(ObString(name_node.str_len_, name_node.str_value_));
+        if (OB_ISNULL(result)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (OB_FAIL(resolve_ai_column_dependencies(*element->children_[4], *result, table_schema))) {
+        } else {
+          for (int64_t index = 0; OB_SUCC(ret) && index < 3; ++index) {
+            ObColumnSchemaV2 companion;
+            if (OB_FAIL(init_ai_column_companion(*result, index, companion))) {
+            } else {
+              companion.set_column_id(gen_column_id());
+              ret = table_schema.add_column(companion);
+            }
+          }
+        }
+      }
+    }
+
     // A table must have at least one column as a visible column
     if (OB_SUCC(ret)) {
       // RESOLVE_NON_COL == resolve_rule when, only parse non-column definitions

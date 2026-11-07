@@ -344,6 +344,15 @@ int assign(const ObColumnSchemaV2 &src_schema);
   int serialize_extended_type_info(char *buf, const int64_t buf_len, int64_t &pos) const;
   int deserialize_extended_type_info(const char *buf, const int64_t data_len, int64_t &pos);
 
+  bool is_ai_column() const { return !ai_column_expr_.empty(); }
+  const ObString &get_ai_column_expr() const { return ai_column_expr_; }
+  const ObString &get_ai_column_dependencies() const { return ai_column_dependencies_; }
+  int set_ai_column_dependencies(const ObString &deps) { return deep_copy_str(deps, ai_column_dependencies_); }
+  ObString get_ai_column_type_prompt() const;
+  int set_ai_column_expr(const ObString &expr) { return deep_copy_str(expr, ai_column_expr_); }
+  int64_t get_ai_column_max_retries() const { return ai_column_max_retries_; }
+  void set_ai_column_max_retries(const int64_t retries) { ai_column_max_retries_ = retries; }
+
   inline share::ObLocalSessionVar &get_local_session_var() { return local_session_vars_; }
   inline const share::ObLocalSessionVar &get_local_session_var() const { return local_session_vars_; }
   int is_same_collection_column(const ObColumnSchemaV2 &other, bool &is_same) const;
@@ -398,6 +407,9 @@ private:
   ObSkipIndexColumnAttr skip_index_attr_;
   int64_t lob_chunk_size_;
   share::ObLocalSessionVar local_session_vars_;
+  ObString ai_column_expr_;
+  ObString ai_column_dependencies_;
+  int64_t ai_column_max_retries_;
 };
 
 inline int32_t ObColumnSchemaV2::get_data_length() const

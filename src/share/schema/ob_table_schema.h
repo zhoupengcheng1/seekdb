@@ -1098,6 +1098,7 @@ public:
   const ObColumnSchemaV2 *get_column_schema(const uint64_t column_id) const;
   const ObColumnSchemaV2 *get_column_schema(const char *column_name) const;
   const ObColumnSchemaV2 *get_column_schema(const common::ObString &column_name) const;
+  bool has_ai_columns() const;
   const ObColumnSchemaV2 *get_column_schema_by_idx(const int64_t idx) const;
 
   const ObColumnSchemaV2 *get_fulltext_column(const ColumnReferenceSet &column_set) const;

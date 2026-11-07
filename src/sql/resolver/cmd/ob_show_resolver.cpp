@@ -366,7 +366,8 @@ int ObShowResolver::resolve(const ParseNode &parse_tree)
       case T_SHOW_COLUMNS: {
         [&] {
           // desc table
-          if (OB_UNLIKELY(parse_tree.num_child_ != 4 || NULL == parse_tree.children_)) {
+          const bool show_ai_columns = parse_tree.num_child_ == 5;
+          if (OB_UNLIKELY((parse_tree.num_child_ != 4 && !show_ai_columns) || NULL == parse_tree.children_)) {
             ret = OB_ERR_UNEXPECTED;
           } else if (OB_UNLIKELY(NULL == parse_tree.children_[0])) {
             ret = OB_ERR_UNEXPECTED;
@@ -389,7 +390,16 @@ int ObShowResolver::resolve(const ParseNode &parse_tree)
               }
             }
 
-            if (OB_SUCC(ret)) {
+            if (OB_SUCC(ret) && show_ai_columns) {
+              ObSqlString query;
+              if (OB_FAIL(query.append_fmt(
+                      "SELECT column_name AS Field, normalized_expr AS Expression, "
+                      "'async' AS Sync_mode, max_retries AS Max_retries "
+                      "FROM oceanbase.__all_ai_column WHERE table_id = %lu ORDER BY column_id",
+                      show_table_id))) {
+              } else if (OB_FAIL(ob_write_string(*allocator_, query.string(), select_sql))) {
+              }
+            } else if (OB_SUCC(ret)) {
               /* (parse_tree.children_[0]->value_)&1        ->  FULL
                * ((parse_tree.children_[0]->value_)>>1)&1   ->  EXTENDED
                */

@@ -24,6 +24,7 @@
 #include "sql/optimizer/ob_log_update.h"
 #include "sql/das/ob_domain_id.h"
 #include "query/vector/ob_vector_index_util.h"
+#include "sql/engine/expr/ob_expr_ai/ob_ai_column_execution.h"
 
 namespace oceanbase
 {
@@ -2148,6 +2149,18 @@ int ObDmlCgService::generate_dml_base_ctdef(ObLogDelUpd &op,
   //generate check cst info
   if (OB_SUCC(ret) && index_dml_info.is_primary_index_) {
     if (OB_FAIL(convert_check_constraint(op, index_dml_info.ref_table_id_, dml_base_ctdef, index_dml_info))) {
+    } else {
+      const ObTableSchema *schema = nullptr;
+      ObSchemaGetterGuard *guard = op.get_plan()->get_optimizer_context().get_schema_guard();
+      if (OB_ISNULL(guard)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(guard->get_table_schema(index_dml_info.ref_table_id_, schema))) {
+      } else if (OB_ISNULL(schema)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (!AiColumnExecution::writing(cg_.opt_ctx_->get_session_info()) && schema->has_ai_columns()) {
+        dml_base_ctdef.das_base_ctdef_.has_ai_columns_ = true;
+        cg_.phy_plan_->set_has_nested_sql(true);
+      }
     }
   }
   if (OB_SUCC(ret) && index_dml_info.is_primary_index_) {
@@ -2233,7 +2246,7 @@ int ObDmlCgService::convert_normal_triggers(ObLogDelUpd &log_op,
       OB_ISNULL(schema_guard = log_plan->get_optimizer_context().get_schema_guard())) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(schema_guard->get_table_schema( dml_info.ref_table_id_, table_schema))) {
-  } else if (table_schema->is_user_table() &&
+  } else if (!AiColumnExecution::writing(cg_.opt_ctx_->get_session_info()) && table_schema->is_user_table() &&
       0 < table_schema->get_trigger_list().count()) {
     
     const ObIArray<uint64_t> &trigger_list = table_schema->get_trigger_list();

@@ -1640,6 +1640,10 @@ int ObSelectResolver::expand_target_list(
   ObArray<ColumnItem> column_items;
   if (table_item.is_basic_table()) {
     if (OB_FAIL(resolve_all_basic_table_columns(table_item, false, &column_items))) {
+    } else {
+      for (int64_t i = 0; OB_SUCC(ret) && i < column_items.count(); ++i) {
+        OZ (check_ai_column_read(column_items.at(i)));
+      }
     }
   } else if (table_item.is_generated_table() ||
              table_item.is_temp_table() ||
