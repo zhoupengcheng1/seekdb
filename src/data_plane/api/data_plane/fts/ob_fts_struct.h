@@ -51,7 +51,10 @@ private:
   ObObjMeta meta_;
 };
 
-typedef common::hash::ObHashMap<ObFTWord, int64_t> ObFTWordMap;
+// Each document's map belongs to one TOKENIZE evaluation or DAS expression
+// evaluation. It is filled and consumed synchronously by that worker; there
+// is no shared dictionary state here that requires bucket latches.
+typedef common::hash::ObHashMap<ObFTWord, int64_t, common::hash::NoPthreadDefendMode> ObFTWordMap;
 
 class ObAddWordFlag final
 {

@@ -1,0 +1,30 @@
+# Regression for character decoding and single-lookup frequency aggregation.
+SET NAMES utf8mb4;
+--result_format 4
+SELECT TOKENIZE('Alpha ALPHA alpha beta beta', 'beng', '[{"output":"all"}]');
+SELECT TOKENIZE('café cafe résumé resume', 'beng', '[{"output":"all"}]');
+SELECT TOKENIZE('数据库 数据库 OceanBase OceanBase １２３ 123 中文，日本語 한국어 😀', 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('数据库 abc ABC 123，。😀' COLLATE utf8mb4_bin, 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('数据库 abc ABC 123，。😀' COLLATE utf8mb4_general_ci, 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE(CAST(REPEAT('数据库abc １２３，', 100) AS CHAR CHARACTER SET utf8mb4), 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('alpha alpha alpha beta beta', 'space', '[{"output":"all"}]');
+SELECT TOKENIZE('数据库数据库', 'ngram', '[{"output":"all"}]');
+SELECT TOKENIZE('the THE and AND about alpha Alpha', 'beng', '[{"output":"all"}]');
+SELECT TOKENIZE('', 'ik'), TOKENIZE('，。！ ', 'ik');
+
+--disable_warnings
+DROP TABLE IF EXISTS fts_hot_path;
+--enable_warnings
+CREATE TABLE fts_hot_path(id INT PRIMARY KEY, txt TEXT,
+  FULLTEXT INDEX fts(txt) WITH PARSER ik);
+INSERT INTO fts_hot_path VALUES (1, '数据库 数据库 检索'), (2, '检索'), (3, 'OceanBase 数据库');
+SELECT id FROM fts_hot_path WHERE MATCH(txt) AGAINST('数据库') ORDER BY id;
+UPDATE fts_hot_path SET txt='检索' WHERE id=1;
+SELECT id FROM fts_hot_path WHERE MATCH(txt) AGAINST('数据库') ORDER BY id;
+START TRANSACTION;
+UPDATE fts_hot_path SET txt='数据库' WHERE id=2;
+ROLLBACK;
+SELECT id FROM fts_hot_path WHERE MATCH(txt) AGAINST('数据库') ORDER BY id;
+DELETE FROM fts_hot_path WHERE id=3;
+SELECT COUNT(*) FROM fts_hot_path WHERE MATCH(txt) AGAINST('数据库');
+DROP TABLE fts_hot_path;
