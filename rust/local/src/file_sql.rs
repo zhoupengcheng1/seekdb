@@ -119,6 +119,49 @@ fn clean(path: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+fn open_relative_legacy(base: Option<&File>, path: &Path, directory: bool) -> Result<File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let path = clean(path)?;
+    if base.is_some() && path.is_absolute() {
+        return Err("absolute path is forbidden beneath a directory descriptor".into());
+    }
+    let mut parent = if let Some(base) = base {
+        base.try_clone()?
+    } else {
+        File::open(if path.is_absolute() { "/" } else { "." })?
+    };
+    let parts: Vec<_> = path.components().filter_map(|part| match part {
+        Component::Normal(name) => Some(name),
+        _ => None,
+    }).collect();
+    // Resolve every component relative to an already pinned directory. Never
+    // follow a symlink, including the final component, and never traverse "..".
+    let count = parts.len().max(1);
+    for index in 0..count {
+        let last = index + 1 == count;
+        let name = std::ffi::CString::new(
+            parts.get(index).map_or(b".".as_slice(), |name| name.as_bytes())
+        )?;
+        let flags = libc::O_CLOEXEC | libc::O_NOFOLLOW | if last {
+            if directory { libc::O_RDONLY | libc::O_DIRECTORY } else { libc::O_PATH }
+        } else {
+            libc::O_PATH | libc::O_DIRECTORY
+        };
+        let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        parent = unsafe { File::from_raw_fd(fd) };
+    }
+    if !directory && !parent.metadata()?.is_file() {
+        return Err("expected a regular file".into());
+    }
+    Ok(parent)
+}
+
+#[cfg(target_os = "linux")]
 fn open_relative(base: Option<&File>, path: &Path, directory: bool) -> Result<File> {
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
@@ -135,13 +178,19 @@ fn open_relative(base: Option<&File>, path: &Path, directory: bool) -> Result<Fi
         flags: flags as u64, mode: 0,
         resolve: RESOLVE_NO_SYMLINKS | if base.is_some() { RESOLVE_BENEATH } else { 0 },
     };
-    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    let encoded_path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
     let fd = unsafe {
         libc::syscall(libc::SYS_openat2, base.map_or(libc::AT_FDCWD, File::as_raw_fd),
-                      path.as_ptr(), &how, std::mem::size_of::<OpenHow>())
+                      encoded_path.as_ptr(), &how, std::mem::size_of::<OpenHow>())
     };
     if fd < 0 {
-        return Err(std::io::Error::last_os_error().into());
+        let error = std::io::Error::last_os_error();
+        // Older kernels and some container profiles do not expose openat2.
+        // Preserve other errors instead of retrying a denied operation.
+        if error.raw_os_error() == Some(libc::ENOSYS) {
+            return open_relative_legacy(base, path, directory);
+        }
+        return Err(error.into());
     }
     let file = unsafe { File::from_raw_fd(fd as i32) };
     if !directory && !file.metadata()?.is_file() {
@@ -1179,6 +1228,36 @@ mod tests {
         let dir = Fixture::new();
         std::fs::write(dir.0.join("broken.parquet"), b"PAR1bad\xff\xff\xff\xffPAR1").unwrap();
         assert!(bind(dir.root(), "broken.parquet", Format::Parquet, Options::default()).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_open_preserves_directory_confinement() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = Fixture::new();
+        let outside = Fixture::new();
+        std::fs::create_dir(dir.0.join("nested")).unwrap();
+        std::fs::write(dir.0.join("nested/rows.csv"), "id\n1\n").unwrap();
+        std::fs::write(outside.0.join("secret.csv"), "secret\n2\n").unwrap();
+        let root = open_relative_legacy(None, &dir.0, true).unwrap();
+        let file = open_relative_legacy(Some(&root), Path::new("nested/rows.csv"), false).unwrap();
+        assert_eq!(file.metadata().unwrap().ino(),
+                   std::fs::metadata(dir.0.join("nested/rows.csv")).unwrap().ino());
+        assert!(open_relative_legacy(Some(&root), Path::new("."), true).is_ok());
+        symlink(&outside.0, dir.0.join("link")).unwrap();
+        symlink(outside.0.join("secret.csv"), dir.0.join("file_link")).unwrap();
+        assert!(open_relative_legacy(Some(&root), Path::new("link/secret.csv"), false).is_err());
+        assert!(open_relative_legacy(Some(&root), Path::new("file_link"), false).is_err());
+        assert!(open_relative_legacy(Some(&root), Path::new("../secret.csv"), false).is_err());
+        assert!(open_relative_legacy(Some(&root), &outside.0.join("secret.csv"), false).is_err());
+        assert!(open_relative_legacy(Some(&root), Path::new("nested"), false).is_err());
+        // Replacing the pathname with a symlink must not redirect a pinned root.
+        std::fs::rename(&dir.0, dir.0.with_extension("moved")).unwrap();
+        symlink(&outside.0, &dir.0).unwrap();
+        assert!(open_relative_legacy(Some(&root), Path::new("nested/rows.csv"), false).is_ok());
+        assert!(open_relative_legacy(Some(&root), Path::new("secret.csv"), false).is_err());
+        std::fs::remove_file(&dir.0).unwrap();
+        std::fs::rename(dir.0.with_extension("moved"), &dir.0).unwrap();
     }
 
     #[test]
