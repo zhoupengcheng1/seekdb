@@ -69,6 +69,20 @@ def run(client, port, directory):
         sql(f"SELECT * FROM read_csv({literal(alias)})", error="ERROR 1235")
         assert sql(f"SELECT COUNT(*) FROM glob({literal(root / 'link*')})") == "0"
 
+        # Hidden files require an explicit dot, including in parent directories.
+        hidden = root / ".hidden"
+        visible = root / "visible"
+        hidden.mkdir()
+        visible.mkdir()
+        (hidden / "row.csv").write_text("id\n1\n", encoding="utf-8")
+        (visible / "row.csv").write_text("id\n1\n", encoding="utf-8")
+        (root / "._left.csv").write_bytes(b"not CSV: auxiliary metadata")
+        assert sql(f"SELECT COUNT(*) FROM glob({literal(root / '._*')})") == "1"
+        assert sql(f"SELECT COUNT(*) FROM glob({literal(root / '*')}) "
+                   "WHERE SUBSTRING_INDEX(file,'/',-1) LIKE '.%'") == "0"
+        assert sql(f"SELECT file FROM glob({literal(root / '*/*.csv')})") == str(visible / "row.csv")
+        assert sql(f"SELECT file FROM glob({literal(root / '.*/*.csv')})") == str(hidden / "row.csv")
+
         output = root / "export.csv"
         copy = f"COPY (SELECT id,note FROM {left} ORDER BY id) TO {literal(output)} (FORMAT csv, HEADER, DELIMITER ';', NULLSTR 'NA')"
         sql(copy)

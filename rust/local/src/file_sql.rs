@@ -269,7 +269,12 @@ impl Sandbox {
                     }
                     let entry = entry?;
                     if let Some(name) = entry.file_name().to_str() {
-                        if pattern.matches(name) {
+                        // Wildcards do not discover hidden names unless this
+                        // path component explicitly starts with a dot.
+                        if pattern.matches_with(name, glob::MatchOptions {
+                            require_literal_leading_dot: true,
+                            ..glob::MatchOptions::new()
+                        }) {
                             let ty = entry.file_type()?;
                             if (last && ty.is_file()) || (!last && ty.is_dir()) {
                                 let relative = prefix.join(name);
@@ -1221,6 +1226,30 @@ mod tests {
         assert!(sandbox.open("outside/secret.csv").is_err());
         assert!(sandbox.open(path.to_str().unwrap()).is_err());
         assert!(sandbox.discover("outside/*").unwrap().is_empty());
+    }
+
+    #[test]
+    fn glob_requires_explicit_leading_dot_in_each_component() {
+        let dir = Fixture::new();
+        for sub in ["visible", ".hidden"] {
+            std::fs::create_dir(dir.0.join(sub)).unwrap();
+            std::fs::write(dir.0.join(sub).join("row.csv"), "id\n1\n").unwrap();
+        }
+        for name in ["rows.csv", "._rows.csv", ".settings"] {
+            std::fs::write(dir.0.join(name), "id\n1\n").unwrap();
+        }
+        let sandbox = Sandbox::new(dir.root()).unwrap();
+        let paths = |pattern| sandbox.discover(pattern).unwrap().into_iter()
+            .map(|p| p.strip_prefix(&format!("{}/", dir.root())).unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(paths("*"), vec!["rows.csv"]);
+        assert_eq!(paths("?*"), vec!["rows.csv"]);
+        assert_eq!(paths("[r.]*"), vec!["rows.csv"]);
+        assert_eq!(paths(".*"), vec!["._rows.csv", ".settings"]);
+        assert_eq!(paths("._*"), vec!["._rows.csv"]);
+        assert_eq!(paths("._rows.csv"), vec!["._rows.csv"]);
+        assert_eq!(paths("*/*.csv"), vec!["visible/row.csv"]);
+        assert_eq!(paths(".*/*.csv"), vec![".hidden/row.csv"]);
     }
 
     #[test]
