@@ -28,6 +28,60 @@ namespace oceanbase
 {
 namespace storage
 {
+struct ObFTDictHub::CachedDictionary
+{
+  explicit CachedDictionary(const ObFTDictDesc &desc)
+      : allocator_("IKSharedDict"), container_(allocator_), dictionary_(allocator_, &container_, desc) {}
+  ObArenaAllocator allocator_;
+  ObFTCacheRangeContainer container_;
+  ObFTRangeDict dictionary_;
+};
+
+ObFTDictHub::~ObFTDictHub() { destroy(); }
+
+int ObFTDictHub::get_builtin_dictionary(const ObFTDictDesc &desc, ObIFTDict *&dictionary)
+{
+  int ret = OB_SUCCESS;
+  int slot = -1;
+  switch (desc.type_) {
+    case ObFTDictType::DICT_IK_MAIN: slot = 0; break;
+    case ObFTDictType::DICT_IK_QUAN: slot = 1; break;
+    case ObFTDictType::DICT_IK_STOP: slot = 2; break;
+    default: return OB_NOT_SUPPORTED;
+  }
+  if (!is_inited_) {
+    return OB_NOT_INIT;
+  }
+  CachedDictionary *cached = builtin_[slot].load(std::memory_order_acquire);
+  if (cached == nullptr) {
+    std::lock_guard<std::mutex> guard(builtin_mutex_);
+    cached = builtin_[slot].load(std::memory_order_relaxed);
+    if (cached == nullptr) {
+      if (OB_ISNULL(cached = OB_NEW(CachedDictionary, "IKSharedDict", desc))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        ret = load_cache(desc, cached->container_);
+        if (ret == OB_ENTRY_NOT_EXIST) {
+          ret = build_cache(desc, cached->container_);
+        }
+        if (OB_SUCC(ret)) {
+          ret = cached->dictionary_.init();
+        }
+        if (OB_SUCC(ret)) {
+          builtin_[slot].store(cached, std::memory_order_release);
+        } else {
+          OB_DELETE(CachedDictionary, "IKSharedDict", cached);
+          cached = nullptr;
+        }
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    dictionary = &cached->dictionary_;
+  }
+  return ret;
+}
+
 int ObFTDictHub::init()
 {
   static constexpr int K_MAX_DICT_BUCKET = 128; // for now, only built-in dicts.
@@ -44,6 +98,12 @@ int ObFTDictHub::destroy()
 {
   int ret = OB_SUCCESS;
   is_inited_ = false;
+  for (auto &entry : builtin_) {
+    CachedDictionary *cached = entry.exchange(nullptr, std::memory_order_acq_rel);
+    if (cached != nullptr) {
+      OB_DELETE(CachedDictionary, "IKSharedDict", cached);
+    }
+  }
   return ret;
 }
 int ObFTDictHub::build_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container)

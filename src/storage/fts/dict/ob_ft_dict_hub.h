@@ -20,6 +20,8 @@
 #include "lib/charset/ob_charset.h"
 #include "lib/lock/ob_bucket_lock.h"
 #include "storage/fts/dict/ob_ft_dict_def.h"
+#include <atomic>
+#include <mutex>
 
 namespace oceanbase
 {
@@ -93,11 +95,12 @@ private:
 };
 
 class ObFTCacheRangeContainer;
+class ObIFTDict;
 class ObFTDictHub
 {
 public:
   ObFTDictHub() : is_inited_(false), dict_map_(), rw_dict_lock_() {}
-  ~ObFTDictHub() {}
+  ~ObFTDictHub();
 
   int init();
 
@@ -106,6 +109,9 @@ public:
   int build_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container);
 
   int load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container);
+  // Immutable built-in dictionaries are shared; their cache handles stay
+  // pinned until server shutdown. Match cursors remain private to parsers.
+  int get_builtin_dictionary(const ObFTDictDesc &desc, ObIFTDict *&dictionary);
 
 private:
   int get_dict_info(const ObFTDictInfoKey &key, ObFTDictInfo &info);
@@ -118,6 +124,9 @@ private:
   // holds info of dict
   hash::ObHashMap<ObFTDictInfoKey, ObFTDictInfo> dict_map_;
   ObBucketLock rw_dict_lock_;
+  struct CachedDictionary;
+  std::atomic<CachedDictionary *> builtin_[3]{};
+  std::mutex builtin_mutex_;
 };
 
 } //  namespace storage

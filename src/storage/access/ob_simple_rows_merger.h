@@ -23,11 +23,11 @@ namespace oceanbase
 namespace storage
 {
 
-template <typename T, typename Comparator>
+template <typename T, typename Comparator, int64_t MaxTableCount = 3>
 class ObSimpleRowsMerger : public common::ObRowsMerger<T, Comparator>
 {
 public:
-  static const int64_t USE_SIMPLE_MERGER_MAX_TABLE_CNT = 3;
+  static const int64_t USE_SIMPLE_MERGER_MAX_TABLE_CNT = MaxTableCount;
   virtual ObRowMergerType type() override { return ObRowMergerType::SIMPLE_MERGER; }
   ObSimpleRowsMerger(Comparator& cmp);
   virtual ~ObSimpleRowsMerger();
@@ -56,8 +56,8 @@ private:
 };
 typedef ObSimpleRowsMerger<ObScanMergeLoserTreeItem, ObScanMergeLoserTreeCmp> ObScanSimpleMerger;
 
-template <typename T, typename Comparator>
-ObSimpleRowsMerger<T, Comparator>::ObSimpleRowsMerger(Comparator& cmp)
+template <typename T, typename Comparator, int64_t MaxTableCount>
+ObSimpleRowsMerger<T, Comparator, MaxTableCount>::ObSimpleRowsMerger(Comparator& cmp)
   : is_inited_(false),
     table_cnt_(0),
     item_cnt_(0),
@@ -66,14 +66,14 @@ ObSimpleRowsMerger<T, Comparator>::ObSimpleRowsMerger(Comparator& cmp)
     allocator_(nullptr)
 {}
 
-template <typename T, typename Comparator>
-ObSimpleRowsMerger<T, Comparator>::~ObSimpleRowsMerger()
+template <typename T, typename Comparator, int64_t MaxTableCount>
+ObSimpleRowsMerger<T, Comparator, MaxTableCount>::~ObSimpleRowsMerger()
 {
   reset();
 }
 
-template <typename T, typename Comparator>
-void ObSimpleRowsMerger<T, Comparator>::reset()
+template <typename T, typename Comparator, int64_t MaxTableCount>
+void ObSimpleRowsMerger<T, Comparator, MaxTableCount>::reset()
 {
   is_inited_ = false;
   table_cnt_ = 0;
@@ -85,15 +85,15 @@ void ObSimpleRowsMerger<T, Comparator>::reset()
   allocator_ = nullptr;
 }
 
-template <typename T, typename Comparator>
-void ObSimpleRowsMerger<T, Comparator>::reuse()
+template <typename T, typename Comparator, int64_t MaxTableCount>
+void ObSimpleRowsMerger<T, Comparator, MaxTableCount>::reuse()
 {
   table_cnt_ = 0;
   item_cnt_ = 0;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::init(const int64_t max_table_cnt, const int64_t table_cnt, common::ObIAllocator &allocator)
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::init(const int64_t max_table_cnt, const int64_t table_cnt, common::ObIAllocator &allocator)
 {
   UNUSED(max_table_cnt);
   int ret = OB_SUCCESS;
@@ -117,8 +117,8 @@ int ObSimpleRowsMerger<T, Comparator>::init(const int64_t max_table_cnt, const i
   return ret;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::open(const int64_t table_cnt)
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::open(const int64_t table_cnt)
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
@@ -133,20 +133,20 @@ int ObSimpleRowsMerger<T, Comparator>::open(const int64_t table_cnt)
   return ret;
 }
 
-template <typename T, typename Comparator>
-bool ObSimpleRowsMerger<T, Comparator>::empty() const
+template <typename T, typename Comparator, int64_t MaxTableCount>
+bool ObSimpleRowsMerger<T, Comparator, MaxTableCount>::empty() const
 {
   return item_cnt_ <= 0;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::count() const
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::count() const
 {
   return item_cnt_;
 }
 
-template <typename T, typename Comparator>
-bool ObSimpleRowsMerger<T, Comparator>::is_unique_champion() const
+template <typename T, typename Comparator, int64_t MaxTableCount>
+bool ObSimpleRowsMerger<T, Comparator, MaxTableCount>::is_unique_champion() const
 {
   bool bret = true;
   if (!empty()) {
@@ -157,8 +157,8 @@ bool ObSimpleRowsMerger<T, Comparator>::is_unique_champion() const
   return bret;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::push(const T &item)
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::push(const T &item)
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
@@ -212,21 +212,21 @@ int ObSimpleRowsMerger<T, Comparator>::push(const T &item)
   return ret;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::push_top(const T &item)
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::push_top(const T &item)
 {
   return push(item);
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::rebuild()
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::rebuild()
 {
   int ret = OB_SUCCESS;
   return ret;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::top(const T *&item)
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::top(const T *&item)
 {
   int ret = OB_SUCCESS;
   if (empty()) {
@@ -238,8 +238,8 @@ int ObSimpleRowsMerger<T, Comparator>::top(const T *&item)
   return ret;
 }
 
-template <typename T, typename Comparator>
-int ObSimpleRowsMerger<T, Comparator>::pop()
+template <typename T, typename Comparator, int64_t MaxTableCount>
+int ObSimpleRowsMerger<T, Comparator, MaxTableCount>::pop()
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {

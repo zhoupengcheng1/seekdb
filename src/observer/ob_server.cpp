@@ -1078,6 +1078,8 @@ void ObServer::destroy()
     startup_accel_handler_.destroy();
     FLOG_INFO("server startup task handler destroyed");
 
+    // Release shared parser dictionary handles before their backing caches.
+    deinit_fts();
     FLOG_INFO("begin to destroy dict cache");
     ObDictCache::get_instance().destroy();
     FLOG_INFO("dict cache destroyed");
@@ -1101,7 +1103,6 @@ void ObServer::destroy()
     ObClockGenerator::destroy();
     FLOG_INFO("clock generator destroyed");
 
-    deinit_fts();
 
     FLOG_INFO("begin to destroy io device");
     ObIODeviceWrapper::get_instance().destroy();

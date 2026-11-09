@@ -161,7 +161,7 @@ private:
     int64_t cmp_cnt_;
     bool is_inited_;
   };
-  typedef ObSimpleRowsMerger<ObBlockStatKeyItem, ObBlockStatKeyCmp> ObBSSimpleMerger;
+  typedef ObSimpleRowsMerger<ObBlockStatKeyItem, ObBlockStatKeyCmp, 8> ObBSSimpleMerger;
   typedef ObMergeLoserTree<ObBlockStatKeyItem, ObBlockStatKeyCmp> ObBSLoserTree;
   typedef common::ObRowsMerger<ObBlockStatKeyItem, ObBlockStatKeyCmp> OBSMergeHeap;
 
