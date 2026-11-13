@@ -249,14 +249,8 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
                               ObCharsetType::CHARSET_UTF8MB4,
                               ObCollationType::CS_TYPE_UTF8MB4_BIN);
 
-  ObFTDictDesc stopword_dict_desc("stopword",
-                                  ObFTDictType::DICT_IK_STOP,
-                                  ObCharsetType::CHARSET_UTF8MB4,
-                                  ObCollationType::CS_TYPE_UTF8MB4_BIN);
-
   if (OB_SUCC(ret) && OB_FAIL(hub_->get_builtin_dictionary(main_dict_desc, dict_main_))) {
   } else if (OB_SUCC(ret) && OB_FAIL(hub_->get_builtin_dictionary(quan_dict_desc, dict_quan_))) {
-  } else if (OB_SUCC(ret) && OB_FAIL(hub_->get_builtin_dictionary(stopword_dict_desc, dict_stop_))) {
   }
   return ret;
 }
@@ -341,7 +335,6 @@ void ObIKFTParser::reset()
   // Dictionary views and pinned handles belong to the server's dictionary hub.
   dict_main_ = nullptr;
   dict_quan_ = nullptr;
-  dict_stop_ = nullptr;
 
   is_inited_ = false;
 }

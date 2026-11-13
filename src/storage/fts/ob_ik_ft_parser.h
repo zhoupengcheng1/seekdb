@@ -42,8 +42,7 @@ public:
         hub_(hub),
         segmenters_(allocator_),
         dict_main_(nullptr),
-        dict_quan_(nullptr),
-        dict_stop_(nullptr)
+        dict_quan_(nullptr)
   {
   }
 
@@ -90,7 +89,6 @@ private:
   // Borrowed immutable views, owned by hub_.
   ObIFTDict *dict_main_;
   ObIFTDict *dict_quan_;
-  ObIFTDict *dict_stop_;
 
   DISABLE_COPY_ASSIGN(ObIKFTParser);
 };
