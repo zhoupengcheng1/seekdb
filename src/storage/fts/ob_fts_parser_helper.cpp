@@ -393,6 +393,17 @@ public:
     entries_.emplace(key, std::make_shared<const std::vector<ObFTTokenRecord>>(std::move(records)));
   }
 
+  // Large IK index builds retain token vectors while the next index is built.
+  // Release them as soon as a non-IK parser is used so BENG/space builds do not
+  // compete with the cache for the 4 GiB memory budget.
+  void clear_if_not_empty()
+  {
+    std::lock_guard<std::mutex> guard(lock_);
+    if (!entries_.empty()) {
+      entries_.clear();
+    }
+  }
+
 private:
   static constexpr size_t MAX_ENTRIES = 100000;
   std::mutex lock_;
@@ -491,6 +502,9 @@ int ObFTParseHelper::segment(
         doc_length = add_word.get_add_word_count();
       }
     } else {
+      if (!cacheable) {
+        token_cache().clear_if_not_empty();
+      }
       std::vector<ObFTTokenRecord> records;
       records.reserve(64);
       if (cacheable) {
