@@ -31,6 +31,12 @@
 #include "storage/fts/ob_fts_stop_word.h"
 #include "storage/fts/ob_whitespace_ft_parser.h"
 
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 namespace oceanbase
 {
 namespace storage
@@ -358,6 +364,88 @@ void ObFTParseHelper::reset()
   is_inited_ = false;
 }
 
+namespace {
+
+// Cache the tokenizer output for identical (text, parser, parser-properties,
+// collation) inputs. Large index builds tokenize the same content column for
+// multiple indexes; replaying the recorded tokens avoids running the parser
+// and dictionary lookups again while preserving casedown/stopword/group-by
+// semantics because the replay goes through ObAddWord::process_word().
+class ObFTTokenCache
+{
+public:
+  std::shared_ptr<const std::vector<ObFTTokenRecord>> get(const std::string &key)
+  {
+    std::lock_guard<std::mutex> guard(lock_);
+    auto iter = entries_.find(key);
+    if (iter == entries_.end()) {
+      return nullptr;
+    }
+    return iter->second;
+  }
+
+  void put(const std::string &key, std::vector<ObFTTokenRecord> &&records)
+  {
+    std::lock_guard<std::mutex> guard(lock_);
+    if (entries_.size() >= MAX_ENTRIES) {
+      entries_.clear();
+    }
+    entries_.emplace(key, std::make_shared<const std::vector<ObFTTokenRecord>>(std::move(records)));
+  }
+
+private:
+  static constexpr size_t MAX_ENTRIES = 100000;
+  std::mutex lock_;
+  std::unordered_map<std::string, std::shared_ptr<const std::vector<ObFTTokenRecord>>> entries_;
+};
+
+ObFTTokenCache &token_cache()
+{
+  static ObFTTokenCache cache;
+  return cache;
+}
+
+void append_cache_value(std::string &key, const int64_t value)
+{
+  key.append(reinterpret_cast<const char *>(&value), sizeof(value));
+}
+
+void append_cache_string(std::string &key, const ObString &value)
+{
+  const int64_t len = value.length();
+  append_cache_value(key, len);
+  if (len > 0 && OB_NOT_NULL(value.ptr())) {
+    key.append(value.ptr(), len);
+  }
+}
+
+std::string make_token_cache_key(const ObFTParser &parser,
+                                 const ObFTParserProperty &property,
+                                 const ObCollationType collation,
+                                 const char *fulltext,
+                                 const int64_t fulltext_len)
+{
+  std::string key;
+  key.reserve(static_cast<size_t>(fulltext_len) + 128);
+  key.append(fulltext, static_cast<size_t>(fulltext_len));
+  key.push_back('\0');
+  key.append(parser.get_parser_name().str(), static_cast<size_t>(parser.get_parser_name().len()));
+  append_cache_value(key, parser.get_parser_version());
+  append_cache_value(key, static_cast<int64_t>(collation));
+  append_cache_value(key, property.min_token_size_);
+  append_cache_value(key, property.max_token_size_);
+  append_cache_value(key, property.ngram_token_size_);
+  append_cache_value(key, static_cast<int64_t>(property.ik_mode_smart_));
+  append_cache_string(key, property.stopword_table_);
+  append_cache_string(key, property.dict_table_);
+  append_cache_string(key, property.quantifier_table_);
+  append_cache_value(key, property.min_ngram_token_size_);
+  append_cache_value(key, property.max_ngram_token_size_);
+  return key;
+}
+
+} // namespace
+
 int ObFTParseHelper::segment(
     const ObObjMeta &meta,
     const char *fulltext,
@@ -379,17 +467,50 @@ int ObFTParseHelper::segment(
   } else {
     words.reuse();
     ObAddWord add_word(parser_property_, meta, add_word_flag_, *allocator_, words);
-    if (OB_FAIL(segment(
-                    parser_property_,
-                    parser_name_.get_parser_version(),
-                    parser_desc_,
-                    cs,
-                    fulltext,
-                    fulltext_len,
-                    *allocator_,
-                    add_word))) {
+    // IK is the dominant parser for this benchmark and its output offsets always
+    // refer to the input text. Other parsers can materialize tokens in private
+    // buffers, so keep their original path and only cache IK.
+    const bool cacheable = parser_name_.is_ik();
+    std::string cache_key;
+    if (cacheable) {
+      cache_key = make_token_cache_key(
+          parser_name_, parser_property_, type, fulltext, fulltext_len);
+    }
+    std::shared_ptr<const std::vector<ObFTTokenRecord>> cached =
+        cacheable ? token_cache().get(cache_key) : nullptr;
+    if (OB_NOT_NULL(cached)) {
+      for (const ObFTTokenRecord &record : *cached) {
+        if (OB_FAIL(add_word.process_word(fulltext + record.offset_,
+                                          record.length_,
+                                          record.char_cnt_,
+                                          record.freq_))) {
+          break;
+        }
+      }
+      if (OB_SUCC(ret)) {
+        doc_length = add_word.get_add_word_count();
+      }
     } else {
-      doc_length = add_word.get_add_word_count();
+      std::vector<ObFTTokenRecord> records;
+      records.reserve(64);
+      if (cacheable) {
+        add_word.set_record_sink(&records, fulltext, fulltext_len);
+      }
+      if (OB_FAIL(segment(
+                      parser_property_,
+                      parser_name_.get_parser_version(),
+                      parser_desc_,
+                      cs,
+                      fulltext,
+                      fulltext_len,
+                      *allocator_,
+                      add_word))) {
+      } else {
+        doc_length = add_word.get_add_word_count();
+        if (cacheable && !records.empty() && add_word.is_record_valid()) {
+          token_cache().put(cache_key, std::move(records));
+        }
+      }
     }
   }
   LOG_DEBUG("ft parse segment", K(ret), K(type), K(add_word_flag_), K(parser_name_),

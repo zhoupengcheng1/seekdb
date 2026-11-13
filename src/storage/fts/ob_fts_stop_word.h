@@ -93,6 +93,14 @@ private:
               "ob_stop_word_list's number shouldn't be greater than DEFAULT_STOPWORD_BUCKET_NUM");
 };
 
+struct ObFTTokenRecord
+{
+  int64_t offset_;
+  int64_t length_;
+  int64_t char_cnt_;
+  int64_t freq_;
+};
+
 class ObAddWord final
 {
 public:
@@ -109,6 +117,18 @@ public:
       const int64_t char_cnt,
       const int64_t word_freq);
   virtual int64_t get_add_word_count() const { return non_stopword_cnt_; }
+
+  // Optional sink used by the tokenization cache. Records are raw parser
+  // output (before casedown/stopword/groupby) so replay preserves semantics.
+  void set_record_sink(std::vector<ObFTTokenRecord> *sink, const char *base, const int64_t len)
+  {
+    record_sink_ = sink;
+    record_base_ = base;
+    record_end_ = base + len;
+    record_valid_ = true;
+  }
+
+  bool is_record_valid() const { return record_valid_; }
   VIRTUAL_TO_STRING_KV(
       K_(word_meta),
       K_(min_max_word_cnt),
@@ -133,6 +153,10 @@ private:
   int64_t min_token_size_;
   int64_t max_token_size_;
   ObAddWordFlag flag_;
+  std::vector<ObFTTokenRecord> *record_sink_ = nullptr;
+  const char *record_base_ = nullptr;
+  const char *record_end_ = nullptr;
+  bool record_valid_ = true;
 };
 
 } // end namespace storage

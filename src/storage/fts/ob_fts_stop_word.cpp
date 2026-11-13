@@ -148,6 +148,18 @@ int ObAddWord::process_word(
     ++stopword_cnt_;
   } else if (OB_FAIL(groupby_word(dst_word, word_freq))) {
   } else {
+    if (OB_NOT_NULL(record_sink_) && OB_NOT_NULL(record_base_)) {
+      // Some parser outputs (e.g. compound tokens) are backed by a temporary
+      // buffer rather than the input text. Such a document must not be cached,
+      // otherwise replaying an offset into the wrong buffer would be invalid.
+      if (word >= record_base_ && word + word_len <= record_end_) {
+        record_sink_->push_back(ObFTTokenRecord{
+          word - record_base_, word_len, char_cnt, word_freq});
+      } else {
+        record_sink_ = nullptr;
+        record_valid_ = false;
+      }
+    }
     non_stopword_cnt_ += word_freq;
   }
   return ret;
